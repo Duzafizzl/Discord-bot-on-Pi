@@ -1,2 +1,27 @@
+# Node / TypeScript
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.*
+!.env.template
+*.pem
+*.key
+
+# Logs & OS junk
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+.idea/
+.vscode/
+
+# Transpiled JS duplicates (we commit TS)
+src/**/*.js
+!src/**/*.config.js
 node_modules
 .env

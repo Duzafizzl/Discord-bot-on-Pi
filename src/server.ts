@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { Client, GatewayIntentBits, Message, OmitPartialGroupDMChannel, Partials } from 'discord.js';
 import { sendMessage, sendTimerMessage, MessageType } from './messages';
+import { registerAttachmentForwarder } from './listeners/attachmentForwarder';
 
 
 const app = express();
@@ -23,6 +24,25 @@ function truncateMessage(message: string, maxLength: number): string {
     return message;
 }
 
+function chunkText(text: string, limit: number): string[] {
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    let end = Math.min(i + limit, text.length);
+    let slice = text.slice(i, end);
+    if (end < text.length) {
+      const lastNewline = slice.lastIndexOf('\n');
+      if (lastNewline > Math.floor(limit * 0.6)) {
+        end = i + lastNewline + 1;
+        slice = text.slice(i, end);
+      }
+    }
+    chunks.push(slice);
+    i = end;
+  }
+  return chunks;
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds, // Needed for commands and mentions
@@ -32,6 +52,9 @@ const client = new Client({
   ],
   partials: [Partials.Channel] // Required for handling DMs
 });
+
+// Register attachment forwarder listener for image attachments
+registerAttachmentForwarder(client);
 
 // Discord Bot Ready Event
 client.once('ready', () => {
@@ -43,8 +66,19 @@ async function processAndSendMessage(message: OmitPartialGroupDMChannel<Message<
   try {
     const msg = await sendMessage(message, messageType)
     if (msg !== "") {
-      await message.reply(msg);
-      console.log(`Message sent: ${msg}`);
+      if (msg.length <= 1900) {
+        await message.reply(msg);
+        console.log(`Message sent: ${msg}`);
+      } else {
+        const chunks = chunkText(msg, 1900);
+        // first chunk as reply, rest as follow-ups
+        await message.reply(chunks[0]);
+        for (let i = 1; i < chunks.length; i++) {
+          await new Promise(r => setTimeout(r, 200));
+          await message.channel.send(chunks[i]);
+        }
+        console.log(`Message sent in ${chunks.length} chunks.`);
+      }
     }
   } catch (error) {
     console.error("🛑 Error processing and sending message:", error);
@@ -118,6 +152,15 @@ async function startRandomEventTimer() {
 
 // Handle messages mentioning the bot
 client.on('messageCreate', async (message) => {
+  // Let the attachment forwarder handle image attachments to avoid double replies
+  if (message.attachments?.size) {
+    for (const [, att] of message.attachments) {
+      const ct = (att as any).contentType || (att as any).content_type || '';
+      if (typeof ct === 'string' && ct.startsWith('image/')) {
+        return;
+      }
+    }
+  }
   if (CHANNEL_ID && message.channel.id !== CHANNEL_ID) {
     // Ignore messages from other channels
     console.log(`📩 Ignoring message from other channels (only listening on channel=${CHANNEL_ID})...`);
@@ -194,6 +237,7 @@ client.on('messageCreate', async (message) => {
 // Start the Discord bot
 app.listen(PORT, () => {
   console.log('Listening on port', PORT);
-  client.login(process.env.DISCORD_TOKEN);
+  const token = String(process.env.DISCORD_TOKEN || '').trim();
+  client.login(token);
   startRandomEventTimer();
 });
