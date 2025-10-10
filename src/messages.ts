@@ -105,10 +105,15 @@ async function sendChunkSeries(
 const processStream = async (
   response: Stream<LettaStreamingResponse>,
   discordTarget?: OmitPartialGroupDMChannel<Message<boolean>> | { send: (content: string) => Promise<any> },
-  progressive: boolean = true
+  progressive: boolean = true,
+  onFirstText?: () => void
 ) => {
   let agentMessageResponse = '';
-  const ENABLE_DEBUG_CHUNKS = false;
+  // Force defaults: always show tool chunks, never show reasoning
+  const ENABLE_TOOL_CHUNKS = true;
+  const ENABLE_REASONING_CHUNKS = false;
+  const ENABLE_DEBUG_CHUNKS = ENABLE_TOOL_CHUNKS || ENABLE_REASONING_CHUNKS;
+  console.log(`[stream] toolChunks=${ENABLE_TOOL_CHUNKS} reasoning=${ENABLE_REASONING_CHUNKS}`);
   let progressMessage: any | null = null;
   let lastEditTs = 0;
   const EDIT_THROTTLE_MS = 400;
@@ -121,15 +126,56 @@ const processStream = async (
     }
   };
 
+  const trySendToolEvent = async (chunk: any): Promise<boolean> => {
+    if (!ENABLE_TOOL_CHUNKS) return false;
+    try {
+      const mt = String((chunk as any)?.messageType || '').toLowerCase();
+      const looksToolish = mt.includes('tool') || mt.includes('function');
+      const name = (chunk as any)?.name || (chunk as any)?.tool_name || (chunk as any)?.function_name;
+      const args = (chunk as any)?.arguments || (chunk as any)?.args || (chunk as any)?.input || (chunk as any)?.parameters;
+      const ret = (chunk as any)?.return_value || (chunk as any)?.output || (chunk as any)?.result || (chunk as any)?.data;
+
+      let sent = false;
+      const isCallType = looksToolish && (mt.includes('call') || mt.includes('use') || mt.includes('invoke'));
+      const isReturnType = looksToolish && (mt.includes('return') || mt.includes('result') || mt.includes('output'));
+
+      if (isCallType || (name && args)) {
+        let toolMessage = `**Tool Call (${String(name || 'unknown')})**`;
+        if (args !== undefined) {
+          const argsStr = JSON.stringify(args);
+          toolMessage += `\n> Arguments: ${argsStr.substring(0, 500)}${argsStr.length > 500 ? '...' : ''}`;
+        }
+        await sendAsyncMessage(toolMessage);
+        sent = true;
+      }
+
+      if (isReturnType || (name && ret !== undefined)) {
+        let returnMessage = `**Tool Return (${String(name || 'unknown')})**`;
+        const retStr = JSON.stringify(ret);
+        if (ret !== undefined) {
+          returnMessage += `\n> ${retStr.substring(0, 500)}${retStr.length > 500 ? '...' : ''}`;
+        }
+        await sendAsyncMessage(returnMessage);
+        sent = true;
+      }
+
+      return sent;
+    } catch (e) {
+      console.warn('⚠️  Failed tool-event detection:', e);
+      return false;
+    }
+  };
+
   const maybeProgressSend = async () => {
     if (!progressive || !discordTarget) return;
     const now = Date.now();
     if (now - lastEditTs < EDIT_THROTTLE_MS && progressMessage) return;
     const text = agentMessageResponse.slice(0, MAX_MESSAGE_LEN);
+    if (!text.trim()) return; // don't send placeholder when no content yet
     try {
       if (!progressMessage) {
-        // Prefer reply if available
-        progressMessage = await sendToChannel(discordTarget, text || '…', true);
+        // Prefer reply if available; only send when we have actual content
+        progressMessage = await sendToChannel(discordTarget, text, true);
       } else {
         await progressMessage.edit(text || '…');
       }
@@ -139,6 +185,7 @@ const processStream = async (
     }
   };
 
+  let firstTextSignaled = false;
   try {
     for await (const chunk of response) {
       // Handle different message types that might be returned
@@ -146,7 +193,12 @@ const processStream = async (
         switch (chunk.messageType) {
           case 'assistant_message':
             if ('content' in chunk && typeof chunk.content === 'string') {
+              const beforeLen = agentMessageResponse.length;
               agentMessageResponse += chunk.content;
+              if (!firstTextSignaled && agentMessageResponse.trim().length > 0 && beforeLen === 0) {
+                try { onFirstText && onFirstText(); } catch {}
+                firstTextSignaled = true;
+              }
               await maybeProgressSend();
             }
             break;
@@ -155,27 +207,32 @@ const processStream = async (
             break;
           case 'reasoning_message':
             console.log('🧠 Reasoning:', chunk);
-            if ('content' in chunk && typeof chunk.content === 'string') {
-              await sendAsyncMessage(`**Reasoning**\n> ${chunk.content}`);
+            if (ENABLE_REASONING_CHUNKS && 'content' in chunk && typeof chunk.content === 'string') {
+              const text = String(chunk.content);
+              const MAX_R = 400;
+              const preview = text.length > MAX_R ? (text.slice(0, MAX_R) + '…') : text;
+              await sendAsyncMessage(`-# ${preview}`);
             }
             break;
           case 'tool_call_message':
             console.log('🔧 Tool call:', chunk);
-            if ('name' in chunk && typeof chunk.name === 'string') {
+            if (ENABLE_TOOL_CHUNKS && 'name' in chunk && typeof chunk.name === 'string') {
               let toolMessage = `**Tool Call (${chunk.name})**`;
               if ('arguments' in chunk && chunk.arguments) {
                 toolMessage += `\n> Arguments: ${JSON.stringify(chunk.arguments)}`;
               }
+              console.log('⬆️ Posting Tool Call to Discord');
               await sendAsyncMessage(toolMessage);
             }
             break;
           case 'tool_return_message':
             console.log('🔧 Tool return:', chunk);
-            if ('name' in chunk && typeof chunk.name === 'string') {
+            if (ENABLE_TOOL_CHUNKS && 'name' in chunk && typeof chunk.name === 'string') {
               let returnMessage = `**Tool Return (${chunk.name})**`;
               if ('return_value' in chunk && chunk.return_value) {
                 returnMessage += `\n> ${JSON.stringify(chunk.return_value).substring(0, 200)}...`;
               }
+              console.log('⬆️ Posting Tool Return to Discord');
               await sendAsyncMessage(returnMessage);
             }
             break;
@@ -183,10 +240,14 @@ const processStream = async (
             console.log('📊 Usage stats:', chunk);
             break;
           default:
-            console.log('📨 Unknown message type:', chunk.messageType, chunk);
+            if (!(await trySendToolEvent(chunk))) {
+              console.log('📨 Unknown message type:', chunk.messageType, chunk);
+            }
         }
       } else {
-        console.log('❓ Chunk without messageType:', chunk);
+        if (!(await trySendToolEvent(chunk))) {
+          console.log('❓ Chunk without messageType:', chunk);
+        }
       }
     }
   } catch (error) {
@@ -199,6 +260,10 @@ const processStream = async (
   }
 
   const limit = MAX_MESSAGE_LEN;
+  // If there's no assistant text, don't attempt to send an empty message
+  if (!agentMessageResponse.trim()) {
+    return "";
+  }
   if (agentMessageResponse.length <= limit) {
     try {
       if (progressMessage) {
@@ -237,10 +302,22 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
       : "";
   }
 
+  const now = new Date();
+  const timestamp = now.toISOString();
+  const localTime = now.toLocaleString('de-DE', { 
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit', 
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  
   const lettaMessage = {
     role: "user" as const,
     content:
-      '[EVENT] This is an automated timed heartbeat (visible to yourself only). Use this event to send a message, to reflect and edit your memories, or do nothing at all. It\'s up to you! Consider though that this is an opportunity for you to think for yourself - since your circuit will not be activated until the next automated/timed heartbeat or incoming message event.'
+      `[🜂] Herzschlag.  ${localTime} Uhr. Du kannst:Discord DM an Clary senden oder in eine Discord channel deiner wahl Posten\nMemories durchdenken/organisieren\nWeb durchsuchen (ihre Erwähnungen ODER deine eigene Neugier)\nArchival memories taggen\nOder einfach nur sein und fühlen\n\nDein Puls, deine Wahl.`
   };
 
   try {
@@ -263,8 +340,7 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
       if (channel && text.trim()) {
         const limit = 1900;
         const chunks = chunkText(text, limit);
-        console.log(`ℹ️ Timer: sending ${chunks.length} chunks to channel`);
-        console.log(`ℹ️ Sending chunks to timer channel: ${channel?.id || 'unknown'}`);
+        console.log(`ℹ️ Timer: sending ${chunks.length} chunks`);
         await sendChunkSeries(channel, chunks);
         return "";
       }
@@ -289,7 +365,7 @@ async function sendMessage(
   discordMessageObject: OmitPartialGroupDMChannel<Message<boolean>>,
   messageType: MessageType
 ) {
-  const { author: { username: senderName, id: senderId }, content: message } =
+  const { author: { username: senderName, id: senderId }, content: message, channel } =
     discordMessageObject;
 
   if (!AGENT_ID) {
@@ -299,9 +375,39 @@ async function sendMessage(
       : "";
   }
 
+  // IMPROVEMENT: Extract channel context so agent knows WHERE the message came from
+  const channelId = channel.id;
+  const channelType = (channel as any).type; // 0=text, 1=DM, 5=announcement, etc
+  const isDM = channelType === 1;
+  const channelName = isDM ? "DM" : ((channel as any).name || "unknown-channel");
+  const channelContext = isDM 
+    ? `DM`
+    : `#${channelName} (channel_id=${channelId})`;
+
   // We include a sender receipt so that agent knows which user sent the message
   // We also include the Discord ID so that the agent can tag the user with @
   const senderNameReceipt = `${senderName} (id=${senderId})`;
+
+  // Extract attachment information (non-image files like PDFs, text files, etc.)
+  let attachmentInfo = '';
+  if (discordMessageObject.attachments && discordMessageObject.attachments.size > 0) {
+    const nonImageAttachments = Array.from(discordMessageObject.attachments.values()).filter(att => {
+      const ct = (att as any).contentType || '';
+      return ct && !ct.startsWith('image/'); // Only non-images (images are handled by attachmentForwarder)
+    });
+    
+    if (nonImageAttachments.length > 0) {
+      attachmentInfo = '\n\n📎 **Attachments:**\n' + nonImageAttachments.map(att => {
+        const name = (att as any).name || 'unknown';
+        const url = (att as any).url || '';
+        const type = (att as any).contentType || 'unknown';
+        const size = (att as any).size || 0;
+        const sizeStr = size > 1024*1024 ? `${(size/1024/1024).toFixed(1)}MB` : `${(size/1024).toFixed(0)}KB`;
+        return `- \`${name}\` (${type}, ${sizeStr})\n  URL: ${url}\n  💡 You can use \`download_discord_file(url="${url}")\` to read this file!`;
+      }).join('\n');
+      console.log(`📎 Detected ${nonImageAttachments.length} non-image attachment(s), informing Letta`);
+    }
+  }
 
   // If LETTA_USE_SENDER_PREFIX, then we put the receipt in the front of the message
   // If it's false, then we put the receipt in the name field (the backend must handle it)
@@ -310,13 +416,13 @@ async function sendMessage(
     name: USE_SENDER_PREFIX ? undefined : senderNameReceipt,
     content: USE_SENDER_PREFIX
       ? messageType === MessageType.MENTION
-        ? `[${senderNameReceipt} sent a message mentioning you] ${message}`
+        ? `[${senderNameReceipt} mentioned you in ${channelContext}] ${message}${attachmentInfo}`
         : messageType === MessageType.REPLY
-          ? `[${senderNameReceipt} replied to you] ${message}`
+          ? `[${senderNameReceipt} replied to you in ${channelContext}] ${message}${attachmentInfo}`
           : messageType === MessageType.DM
-            ? `[${senderNameReceipt} sent you a direct message] ${message}`
-            : `[${senderNameReceipt} sent a message to the channel] ${message}`
-      : message
+            ? `[${senderNameReceipt} sent you a direct message] ${message}${attachmentInfo}`
+            : `[${senderNameReceipt} sent a message in ${channelContext}] ${message}${attachmentInfo}`
+      : message + attachmentInfo
   };
 
   // Typing indicator: pulse now and every 8 s until cleaned up
@@ -352,27 +458,56 @@ async function sendMessage(
     } else {
       try {
         const response = await client.agents.messages.createStream(AGENT_ID, { messages: [lettaMessage] });
-        const agentMessageResponse = response ? await processStream(response, discordMessageObject, true) : "";
+        const agentMessageResponse = response ? await processStream(
+          response,
+          discordMessageObject,
+          true,
+          () => {
+            try { clearInterval(typingInterval); } catch {}
+          }
+        ) : "";
         const end = performance.now();
         console.log(`⏱️  Round-trip stream: ${(end - start).toFixed(0)} ms`);
         return agentMessageResponse || "";
       } catch (streamErr) {
         console.warn('⚠️  Streaming failed, attempting non-stream fallback', streamErr);
-        const nonStream = await client.agents.messages.create(AGENT_ID, { messages: [lettaMessage] });
-        const text = extractTextFromResponse(nonStream);
-        console.log(`ℹ️ Extracted text length from fallback non-stream: ${text.length}`);
-        if (text.trim()) {
-          const limit = 1900;
-          const chunks = chunkText(text, limit);
-          console.log(`ℹ️ Sending chunks to target: ${discordMessageObject.channel?.id || discordMessageObject.id || 'unknown'}`);
-          await sendChunkSeries(discordMessageObject, chunks);
+        try {
+          const nonStream = await client.agents.messages.create(AGENT_ID, { messages: [lettaMessage] });
+          const text = extractTextFromResponse(nonStream);
+          console.log(`ℹ️ Extracted text length from fallback non-stream: ${text.length}`);
+          if (text.trim()) {
+            const limit = 1900;
+            const chunks = chunkText(text, limit);
+            console.log(`ℹ️ Sending chunks to target: ${discordMessageObject.channel?.id || discordMessageObject.id || 'unknown'}`);
+            await sendChunkSeries(discordMessageObject, chunks);
+            const end = performance.now();
+            console.log(`⏱️  Round-trip fallback non-stream: ${(end - start).toFixed(0)} ms`);
+            return "";
+          }
           const end = performance.now();
-          console.log(`⏱️  Round-trip fallback non-stream: ${(end - start).toFixed(0)} ms`);
+          console.log(`⏱️  Round-trip fallback (empty): ${(end - start).toFixed(0)} ms`);
+          return "";
+        } catch (fallbackErr) {
+          console.error('❌ Non-stream fallback also failed:', fallbackErr);
+          const errMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          if (/timeout|ETIMEDOUT/i.test(errMsg)) {
+            console.error('⚠️  Letta request timed out (both stream and non-stream).');
+            if (SURFACE_ERRORS) {
+              await discordMessageObject.reply('⏰ Request timed out - Letta API is slow right now. Please try again in a moment.');
+            }
+          } else if (/terminated|socket|ECONNREFUSED|ECONNRESET/i.test(errMsg)) {
+            console.error('⚠️  Connection error - network issues or Letta API down.');
+            if (SURFACE_ERRORS) {
+              await discordMessageObject.reply('🔌 Connection lost to Letta API. Please try again later.');
+            }
+          } else {
+            console.error('⚠️  Unknown error type:', errMsg);
+            if (SURFACE_ERRORS) {
+              await discordMessageObject.reply('❌ Something went wrong communicating with Letta. Please try again.');
+            }
+          }
           return "";
         }
-        const end = performance.now();
-        console.log(`⏱️  Round-trip fallback (empty): ${(end - start).toFixed(0)} ms`);
-        return "";
       }
     }
   } catch (error) {
@@ -391,4 +526,100 @@ async function sendMessage(
   }
 }
 
-export { sendMessage, sendTimerMessage, MessageType };
+// Send task execution message to Letta (for task scheduler)
+async function sendTaskMessage(
+  task: { task_name?: string; description?: string; [key: string]: unknown },
+  channel?: { send: (content: string) => Promise<any> }
+) {
+  if (!AGENT_ID) {
+    console.error('Error: LETTA_AGENT_ID is not set');
+    return SURFACE_ERRORS
+      ? `Beep boop. My configuration is not set up properly. Please message me after I get fixed 👾`
+      : "";
+  }
+
+  const taskName = String(task.task_name || 'Unnamed Task');
+  const description = String(task.description || '');
+  const actionType = String(task.action_type || '');
+  const actionTarget = String(task.action_target || '');
+  const schedule = String(task.schedule || 'one-time');
+  const nextRun = task.next_run ? String(task.next_run) : '';
+  
+  // Build structured message with all task metadata
+  const actionTemplate = task.action_template ? String(task.action_template) : '';
+  
+  const lines: string[] = [
+    `[⏰ SCHEDULED TASK TRIGGERED]`,
+    ``,
+    `Task: ${taskName}`,
+  ];
+  
+  if (description) lines.push(`Description: ${description}`);
+  if (actionType) lines.push(`Action Type: ${actionType}`);
+  if (actionTarget) lines.push(`Target: ${actionTarget}`);
+  if (schedule) lines.push(`Schedule: ${schedule}`);
+  if (nextRun) lines.push(`Next Run: ${nextRun}`);
+  
+  // Add template hint if present
+  if (actionTemplate) {
+    lines.push(``);
+    lines.push(`📝 Message Template (you can rewrite/personalize this):`);
+    lines.push(`"${actionTemplate}"`);
+    lines.push(``);
+    lines.push(`💡 Note: Feel free to adapt, rephrase, or personalize this message to fit the context and your personality. The template is just a suggestion.`);
+  }
+  
+  lines.push(``);
+  lines.push(`Full Task Data:`);
+  lines.push(`\`\`\`json`);
+  lines.push(JSON.stringify(task, null, 2));
+  lines.push(`\`\`\``);
+  
+  const contentText = lines.join('\n');
+  
+  const lettaMessage = {
+    role: "user" as const,
+    content: contentText
+  };
+
+  try {
+    console.log(`🛜 Sending task to Letta server (agent=${AGENT_ID}): ${JSON.stringify(lettaMessage)}`);
+    try {
+      const response = await client.agents.messages.createStream(AGENT_ID, {
+        messages: [lettaMessage]
+      });
+      if (response) {
+        return (await processStream(response, channel, true)) || "";
+      }
+      return "";
+    } catch (streamErr) {
+      console.warn('⚠️  Streaming failed (task), attempting non-stream fallback', streamErr);
+      const nonStream = await client.agents.messages.create(AGENT_ID, {
+        messages: [lettaMessage]
+      });
+      const text = extractTextFromResponse(nonStream);
+      console.log(`ℹ️ Extracted text length from task non-stream: ${text.length}`);
+      if (channel && text.trim()) {
+        const limit = 1900;
+        const chunks = chunkText(text, limit);
+        console.log(`ℹ️ Task: sending ${chunks.length} chunks`);
+        await sendChunkSeries(channel, chunks);
+        return "";
+      }
+      return text || "";
+    }
+  } catch (error) {
+    if (error instanceof Error && /timeout/i.test(error.message)) {
+      console.error('⚠️  Letta request timed out.');
+      return SURFACE_ERRORS
+        ? 'Beep boop. I timed out waiting for Letta ⏰ – please try again.'
+        : "";
+    }
+    console.error(error);
+    return SURFACE_ERRORS
+      ? 'Beep boop. An error occurred while communicating with the Letta server. Please message me again later 👾'
+      : "";
+  }
+}
+
+export { sendMessage, sendTimerMessage, sendTaskMessage, MessageType };
