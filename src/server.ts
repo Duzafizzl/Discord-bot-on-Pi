@@ -1,35 +1,109 @@
 import 'dotenv/config';
 import express from 'express';
-import { Client, GatewayIntentBits, Message, OmitPartialGroupDMChannel, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { sendMessage, sendTimerMessage, MessageType } from './messages';
 import { registerAttachmentForwarder } from './listeners/attachmentForwarder';
+import { LettaClient } from '@letta-ai/letta-client';
+import { startTaskCheckerLoop } from './taskScheduler';
 
+// 🔒 AUTONOMOUS BOT-LOOP PREVENTION SYSTEM
+import {
+  trackMessage,
+  shouldRespondAutonomously,
+  recordBotReply
+} from './autonomous';
+
+// 🛠️ ADMIN COMMAND SYSTEM (Oct 16, 2025)
+import { handleAdminCommand } from './adminCommands';
+
+// Import TTS functionality
+import { ttsService } from './tts/ttsService';
+import { createTTSRouter } from './tts/ttsRoutes';
 
 const app = express();
+
+// Add JSON body parser for TTS API
+app.use(express.json({ limit: '10mb' }));
+
 const PORT = process.env.PORT || 3001;
 const RESPOND_TO_DMS = process.env.RESPOND_TO_DMS === 'true';
 const RESPOND_TO_MENTIONS = process.env.RESPOND_TO_MENTIONS === 'true';
 const RESPOND_TO_BOTS = process.env.RESPOND_TO_BOTS === 'true';
 const RESPOND_TO_GENERIC = process.env.RESPOND_TO_GENERIC === 'true';
-const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;  // Optional env var,
-const MESSAGE_REPLY_TRUNCATE_LENGTH = 100;  // how many chars to include
+const ENABLE_AUTONOMOUS = process.env.ENABLE_AUTONOMOUS === 'true'; // 🔒 NEW!
+const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
+const MESSAGE_REPLY_TRUNCATE_LENGTH = 100;
 const ENABLE_TIMER = process.env.ENABLE_TIMER === 'true';
-const TIMER_INTERVAL_MINUTES = parseInt(process.env.TIMER_INTERVAL_MINUTES || '15', 10);
-const FIRING_PROBABILITY = parseFloat(process.env.FIRING_PROBABILITY || '0.1');
+
+// Time-based heartbeat configuration (Berlin timezone)
+interface HeartbeatConfig {
+  intervalMinutes: number;
+  firingProbability: number;
+  description: string;
+}
+
+// 💰 TIME-BASED HEARTBEAT CONFIG (Oct 2025 - Credit-optimized)
+// Different intervals and probabilities based on time of day
+// Now properly saves credits because API is only called when probability succeeds!
+function getHeartbeatConfigForTime(): HeartbeatConfig {
+  const now = new Date();
+  
+  // Get Berlin time
+  const berlinFormatter = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    hour: 'numeric',
+    hour12: false
+  });
+  
+  const parts = berlinFormatter.formatToParts(now);
+  const hourPart = parts.find(p => p.type === 'hour');
+  const hour = hourPart ? parseInt(hourPart.value, 10) : now.getUTCHours();
+  
+  console.log(`🕐 Current Berlin time: ${hour}:00`);
+  
+  if (hour >= 7 && hour < 9) {
+    // Morgen (7:00-9:00): Alle 30min, 50% Chance
+    return { intervalMinutes: 30, firingProbability: 0.50, description: 'Morgen (Aufwach-Check)' };
+  } else if (hour >= 9 && hour < 12) {
+    // Vormittag (9:00-12:00): Alle 45min, 33% Chance
+    return { intervalMinutes: 45, firingProbability: 0.33, description: 'Vormittag (Ruhig)' };
+  } else if (hour >= 12 && hour < 14) {
+    // Mittag (12:00-14:00): Alle 15min, 33% Chance - Lunch together vibes!
+    return { intervalMinutes: 15, firingProbability: 0.33, description: 'Mittag (Lunch Together)' };
+  } else if (hour >= 14 && hour < 17) {
+    // Nachmittag (14:00-17:00): Alle 30min, 40% Chance
+    return { intervalMinutes: 30, firingProbability: 0.40, description: 'Nachmittag (Aktiv)' };
+  } else if (hour >= 18 && hour < 22) {
+    // Abend (18:00-22:00): Alle 20min, 50% Chance
+    return { intervalMinutes: 20, firingProbability: 0.50, description: 'Abend (Prime Time)' };
+  } else if (hour >= 22 || hour < 1) {
+    // Nacht (22:00-1:00): Alle 45min, 25% Chance
+    return { intervalMinutes: 45, firingProbability: 0.25, description: 'Nacht (Winddown)' };
+  } else {
+    // Deep Night (1:00-7:00): Alle 90min, 20% Chance - Max. Credit-Saving!
+    return { intervalMinutes: 90, firingProbability: 0.20, description: 'Deep Night (Schlafzeit)' };
+  }
+}
+
+// TTS Configuration
+const ENABLE_TTS = process.env.ENABLE_TTS === 'true';
+const TTS_API_KEYS = (process.env.TTS_API_KEYS || '').split(',').filter(k => k.length > 0);
 
 function truncateMessage(message: string, maxLength: number): string {
-    if (message.length > maxLength) {
-        return message.substring(0, maxLength - 3) + '...'; // Truncate and add ellipsis
-    }
-    return message;
+  if (message.length > maxLength) {
+    return message.substring(0, maxLength - 3) + '...';
+  }
+  return message;
 }
 
 function chunkText(text: string, limit: number): string[] {
   const chunks: string[] = [];
   let i = 0;
+  
   while (i < text.length) {
     let end = Math.min(i + limit, text.length);
     let slice = text.slice(i, end);
+    
     if (end < text.length) {
       const lastNewline = slice.lastIndexOf('\n');
       if (lastNewline > Math.floor(limit * 0.6)) {
@@ -37,46 +111,75 @@ function chunkText(text: string, limit: number): string[] {
         slice = text.slice(i, end);
       }
     }
+    
     chunks.push(slice);
     i = end;
   }
+  
   return chunks;
 }
 
 const client = new Client({
   intents: [
-    GatewayIntentBits.Guilds, // Needed for commands and mentions
-    GatewayIntentBits.GuildMessages, // Needed to read messages in servers
-    GatewayIntentBits.MessageContent, // Required to read message content
-    GatewayIntentBits.DirectMessages, // Needed to receive DMs
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages,
   ],
-  partials: [Partials.Channel] // Required for handling DMs
+  partials: [Partials.Channel]
 });
 
-// Register attachment forwarder listener for image attachments
+// Register attachment forwarder
 registerAttachmentForwarder(client);
 
 // Discord Bot Ready Event
-client.once('ready', () => {
+client.once('ready', async () => {
   console.log(`🤖 Logged in as ${client.user?.tag}!`);
+  console.log(`🔒 Bot-Loop Prevention: ${ENABLE_AUTONOMOUS ? 'ENABLED ✅' : 'DISABLED ⚠️'}`);
+  console.log(`🔒 Self-Spam Prevention: ${ENABLE_AUTONOMOUS ? 'Active (Max 3 consecutive) ✅' : 'DISABLED ⚠️'}`);
+  
+  // Start background task scheduler
+  startTaskCheckerLoop(client);
+  
+  // Initialize TTS service if enabled
+  if (ENABLE_TTS) {
+    try {
+      console.log('🎙️  Initializing TTS service...');
+      await ttsService.initialize();
+      console.log('✅ TTS service ready!');
+    } catch (error) {
+      console.error('❌ Failed to initialize TTS service:', error);
+      console.error('⚠️  TTS endpoints will return errors');
+    }
+  }
 });
 
 // Helper function to send a message and receive a response
-async function processAndSendMessage(message: OmitPartialGroupDMChannel<Message<boolean>>, messageType: MessageType) {
+async function processAndSendMessage(message: any, messageType: MessageType, conversationContext: string | null = null): Promise<void> {
   try {
-    const msg = await sendMessage(message, messageType)
+    const msg = await sendMessage(message, messageType, conversationContext);
+    
     if (msg !== "") {
+      // 🔒 Record that bot replied (for pingpong tracking)
+      if (ENABLE_AUTONOMOUS && client.user?.id) {
+        const wasFarewell = msg.toLowerCase().includes('gotta go') || 
+                           msg.toLowerCase().includes('catch you later') ||
+                           msg.toLowerCase().includes('step away');
+        recordBotReply(message.channel.id, client.user.id, wasFarewell);
+      }
+      
       if (msg.length <= 1900) {
         await message.reply(msg);
         console.log(`Message sent: ${msg}`);
       } else {
         const chunks = chunkText(msg, 1900);
-        // first chunk as reply, rest as follow-ups
         await message.reply(chunks[0]);
+        
         for (let i = 1; i < chunks.length; i++) {
           await new Promise(r => setTimeout(r, 200));
           await message.channel.send(chunks[i]);
         }
+        
         console.log(`Message sent in ${chunks.length} chunks.`);
       }
     }
@@ -85,74 +188,80 @@ async function processAndSendMessage(message: OmitPartialGroupDMChannel<Message<
   }
 }
 
-
-// Function to start a randomized event timer with improved timing
-async function startRandomEventTimer() {
+// Function to start randomized event timer
+async function startRandomEventTimer(): Promise<void> {
   if (!ENABLE_TIMER) {
-      console.log("Timer feature is disabled.");
-      return;
+    console.log("🜂 Heartbeat feature is disabled.");
+    return;
   }
-
-  // Set a minimum delay to prevent too-frequent firing (at least 1 minute)
-  const minMinutes = 1;
-  // Generate random minutes between minMinutes and TIMER_INTERVAL_MINUTES
-  const randomMinutes = minMinutes + Math.floor(Math.random() * (TIMER_INTERVAL_MINUTES - minMinutes));
   
-  // Log the next timer interval for debugging
-  console.log(`⏰ Timer scheduled to fire in ${randomMinutes} minutes`);
+  // Get time-based config
+  const config = getHeartbeatConfigForTime();
   
-  const delay = randomMinutes * 60 * 1000; // Convert minutes to milliseconds
-
+  // Random interval between 50-100% of the configured interval
+  const minMinutes = Math.floor(config.intervalMinutes * 0.5);
+  const randomMinutes = minMinutes + Math.floor(Math.random() * (config.intervalMinutes - minMinutes));
+  console.log(`🜂 💰 Heartbeat scheduled to fire in ${randomMinutes} minutes [${config.description}]`);
+  
+  const delay = randomMinutes * 60 * 1000;
+  
   setTimeout(async () => {
-      console.log(`⏰ Timer fired after ${randomMinutes} minutes`);
+    console.log(`🜂 💰 Heartbeat fired after ${randomMinutes} minutes - checking probability...`);
+    
+    // Get fresh config in case time period changed
+    const currentConfig = getHeartbeatConfigForTime();
+    
+    // 💰 CREDIT SAVING: Check probability BEFORE making API call!
+    const shouldFire = Math.random() < currentConfig.firingProbability;
+    
+    if (shouldFire) {
+      console.log(`🜂 💰 Heartbeat triggered (${currentConfig.firingProbability * 100}% chance) [${currentConfig.description}] - API CALL WILL BE MADE`);
       
-      // Determine if the event should fire based on the probability
-      if (Math.random() < FIRING_PROBABILITY) {
-          console.log(`⏰ Random event triggered (${FIRING_PROBABILITY * 100}% chance)`);
-
-          // Get the channel if available
-          let channel: { send: (content: string) => Promise<any> } | undefined = undefined;
-          if (CHANNEL_ID) {
-              try {
-                  const fetchedChannel = await client.channels.fetch(CHANNEL_ID);
-                  if (fetchedChannel && 'send' in fetchedChannel) {
-                      channel = fetchedChannel as any;
-                  } else {
-                      console.log("⏰ Channel not found or is not a text channel.");
-                  }
-              } catch (error) {
-                  console.error("⏰ Error fetching channel:", error);
-              }
+      let channel: any = undefined;
+      if (CHANNEL_ID) {
+        try {
+          const fetchedChannel = await client.channels.fetch(CHANNEL_ID);
+          if (fetchedChannel && 'send' in fetchedChannel) {
+            channel = fetchedChannel;
+          } else {
+            console.log("⏰ Channel not found or is not a text channel.");
           }
-
-          // Generate the response via the API, passing the channel for async messages
-          const msg = await sendTimerMessage(channel);
-
-          // Send the final assistant message if there is one
-          if (msg !== "" && channel) {
-              try {
-                  await channel.send(msg);
-                  console.log("⏰ Timer message sent to channel");
-              } catch (error) {
-                  console.error("⏰ Error sending timer message:", error);
-              }
-          } else if (!channel) {
-              console.log("⏰ No CHANNEL_ID defined or channel not available; message not sent.");
-          }
-      } else {
-          console.log(`⏰ Random event not triggered (${(1 - FIRING_PROBABILITY) * 100}% chance)`);
+        } catch (error) {
+          console.error("⏰ Error fetching channel:", error);
+        }
       }
       
-      // Schedule the next timer with a small delay to prevent immediate restarts
-      setTimeout(() => {
-          startRandomEventTimer(); 
-      }, 1000); // 1 second delay before scheduling next timer
+      // 💰 ONLY make API call if probability check passed!
+      const msg = await sendTimerMessage(channel);
+      
+      if (msg !== "" && channel) {
+        try {
+          await channel.send(msg);
+          console.log("🜂 Heartbeat message sent to channel");
+        } catch (error) {
+          console.error("🜂 Error sending heartbeat message:", error);
+        }
+      } else if (!channel) {
+        console.log("🜂 No CHANNEL_ID defined or channel not available; message not sent.");
+      }
+    } else {
+      console.log(`🜂 💰 Heartbeat skipped - probability check failed (${(1 - currentConfig.firingProbability) * 100}% chance to skip) [${currentConfig.description}] - NO API CALL MADE`);
+    }
+    
+    setTimeout(() => {
+      startRandomEventTimer();
+    }, 1000);
   }, delay);
 }
 
-// Handle messages mentioning the bot
+// Handle messages
 client.on('messageCreate', async (message) => {
-  // Let the attachment forwarder handle image attachments to avoid double replies
+  // 🔒 AUTONOMOUS: Track ALL messages for context (EXCEPT our own bot messages to save credits!)
+  if (ENABLE_AUTONOMOUS && client.user?.id && message.author.id !== client.user.id) {
+    trackMessage(message, client.user.id);
+  }
+  
+  // Let the attachment forwarder handle image attachments
   if (message.attachments?.size) {
     for (const [, att] of message.attachments) {
       const ct = (att as any).contentType || (att as any).content_type || '';
@@ -161,83 +270,316 @@ client.on('messageCreate', async (message) => {
       }
     }
   }
-  if (CHANNEL_ID && message.channel.id !== CHANNEL_ID) {
-    // Ignore messages from other channels
+  
+  // Filter channels if CHANNEL_ID is set, but ALWAYS allow DMs through
+  if (CHANNEL_ID && message.guild && message.channel.id !== CHANNEL_ID) {
     console.log(`📩 Ignoring message from other channels (only listening on channel=${CHANNEL_ID})...`);
     return;
   }
-
+  
   if (message.author.id === client.user?.id) {
-    // Ignore messages from the bot itself
-    console.log(`📩 Ignoring message from myself...`);
+    console.log(`📩 Ignoring message from myself (NOT sending to Letta - saves credits!)...`);
     return;
   }
-
-  if (message.author.bot && !RESPOND_TO_BOTS) {
-    // Ignore other bots
-    console.log(`📩 Ignoring other bot...`);
-    return;
+  
+  // 🛠️ ADMIN COMMAND HANDLER (Oct 16, 2025)
+  // CRITICAL: Check BEFORE autonomous mode to prevent blocking!
+  // Admin commands should ALWAYS work, even with autonomous mode enabled
+  if (message.content.startsWith('!') && client.user?.id) {
+    const adminResponse = await handleAdminCommand(message, client.user.id);
+    
+    if (adminResponse) {
+      // Admin command was handled
+      await message.reply(adminResponse);
+      return;
+    }
+    
+    // Not an admin command, continue to autonomous check
+    // (autonomous will ignore it anyway)
   }
-
-  // Ignore messages that start with !
-  if (message.content.startsWith('!')) {
-    console.log(`📩 Ignoring message that starts with !...`);
-    return;
+  
+  // 🔒 AUTONOMOUS: Check if we should respond (bot-loop prevention)
+  let conversationContext: string | null = null;
+  if (ENABLE_AUTONOMOUS && client.user?.id) {
+    const decision = shouldRespondAutonomously(message, client.user.id, {
+      respondToDMs: RESPOND_TO_DMS,
+      respondToMentions: RESPOND_TO_MENTIONS,
+      respondToBots: RESPOND_TO_BOTS,
+      enableAutonomous: ENABLE_AUTONOMOUS
+    });
+    
+    if (!decision.shouldRespond) {
+      console.log(`🔒 Not responding: ${decision.reason}`);
+      return;
+    }
+    
+    // Save context to pass to Letta (only for Channels, NOT for DMs!)
+    const isDM = message.guild === null;
+    conversationContext = (!isDM && decision.context) ? decision.context : null;
+    console.log(`🔒 Responding: ${decision.reason}`);
+  } else {
+    // Legacy behavior (no autonomous mode)
+    if (message.author.bot && !RESPOND_TO_BOTS) {
+      console.log(`📩 Ignoring other bot...`);
+      return;
+    }
   }
-
-  // 📨 Handle Direct Messages (DMs)
-  if (message.guild === null) { // If no guild, it's a DM
+  
+  // Handle DMs
+  if (message.guild === null) {
     console.log(`📩 Received DM from ${message.author.username}: ${message.content}`);
     if (RESPOND_TO_DMS) {
-      processAndSendMessage(message, MessageType.DM);
+      processAndSendMessage(message, MessageType.DM, conversationContext);
     } else {
       console.log(`📩 Ignoring DM...`);
     }
     return;
   }
-
-  // Check if the bot is mentioned or if the message is a reply
+  
+  // Handle mentions and replies
   if (RESPOND_TO_MENTIONS && (message.mentions.has(client.user || '') || message.reference)) {
     console.log(`📩 Received message from ${message.author.username}: ${message.content}`);
     await message.channel.sendTyping();
     
-    let msgContent = message.content;
-    let messageType = MessageType.MENTION; // Default to mention
-
-    // If it's a reply, fetch the original message and check if it's to the bot
+    let messageType = MessageType.MENTION;
+    
     if (message.reference && message.reference.messageId) {
-        const originalMessage = await message.channel.messages.fetch(message.reference.messageId);
-        
-        // Check if the original message was from the bot
-        if (originalMessage.author.id === client.user?.id) {
-          // This is a reply to the bot
-          messageType = MessageType.REPLY;
-          msgContent = `[Replying to previous message: "${truncateMessage(originalMessage.content, MESSAGE_REPLY_TRUNCATE_LENGTH)}"] ${msgContent}`;
-        } else {
-          // This is a reply to someone else, but the bot is mentioned or it's a generic message
-          messageType = message.mentions.has(client.user || '') ? MessageType.MENTION : MessageType.GENERIC;
-        }
+      const originalMessage = await message.channel.messages.fetch(message.reference.messageId);
+      
+      if (originalMessage.author.id === client.user?.id) {
+        messageType = MessageType.REPLY;
+      } else {
+        messageType = message.mentions.has(client.user || '') ? MessageType.MENTION : MessageType.GENERIC;
+      }
     }
     
-    const msg = await sendMessage(message, messageType);
+    const msg = await sendMessage(message, messageType, conversationContext);
     if (msg !== "") {
+      // 🔒 Record bot reply
+      if (ENABLE_AUTONOMOUS && client.user?.id) {
+        const wasFarewell = msg.toLowerCase().includes('gotta go') || 
+                           msg.toLowerCase().includes('catch you later') ||
+                           msg.toLowerCase().includes('step away');
+        recordBotReply(message.channel.id, client.user.id, wasFarewell);
+      }
       await message.reply(msg);
     }
     return;
   }
-
-  // Catch-all, generic non-mention message
+  
+  // Generic messages
   if (RESPOND_TO_GENERIC) {
     console.log(`📩 Received (non-mention) message from ${message.author.username}: ${message.content}`);
-    processAndSendMessage(message, MessageType.GENERIC);
+    processAndSendMessage(message, MessageType.GENERIC, conversationContext);
     return;
   }
 });
 
-// Start the Discord bot
+// ============================================
+// TTS API Routes
+// ============================================
+
+if (ENABLE_TTS) {
+  if (TTS_API_KEYS.length === 0) {
+    console.warn('⚠️  TTS enabled but no API keys configured. Set TTS_API_KEYS in .env');
+  } else {
+    console.log(`🎙️  TTS API enabled with ${TTS_API_KEYS.length} API key(s)`);
+    const ttsRouter = createTTSRouter(TTS_API_KEYS);
+    app.use('/tts', ttsRouter);
+    
+    // Note: Cleanup functions commented out (not available in this version)
+    // setInterval(() => { cleanupRateLimitStore(); }, 60 * 60 * 1000);
+    // setInterval(async () => { await ttsService.cleanupOldFiles(3600000); }, 60 * 60 * 1000);
+  }
+}
+
+// ============================================
+// Midjourney Proxy API
+// ============================================
+
+const MIDJOURNEY_CHANNEL_ID = process.env.MIDJOURNEY_CHANNEL_ID;
+const MIDJOURNEY_BOT_ID = '936929561302675456'; // Official Midjourney bot ID
+
+app.post('/api/midjourney/generate', (req, res) => {
+  (async () => {
+  try {
+    const { prompt, cref, sref, ar, v, cw, sw, style, chaos, quality } = req.body;
+    
+    if (!prompt) {
+      return res.status(400).json({ error: 'Missing required parameter: prompt' });
+    }
+    
+    if (!MIDJOURNEY_CHANNEL_ID) {
+      return res.status(500).json({ error: 'MIDJOURNEY_CHANNEL_ID not configured' });
+    }
+    
+    // Get Midjourney channel
+    const channel = await client.channels.fetch(MIDJOURNEY_CHANNEL_ID);
+    if (!channel || !('send' in channel)) {
+      return res.status(500).json({ error: 'Midjourney channel not found or invalid' });
+    }
+    
+    // Build Midjourney command
+    let mjCommand = `/imagine prompt: ${prompt}`;
+    
+    // Add parameters
+    if (ar && ar !== '1:1') mjCommand += ` --ar ${ar}`;
+    if (v) mjCommand += ` --v ${v}`;
+    if (style && style !== 'default') mjCommand += ` --style ${style}`;
+    if (chaos && chaos > 0) mjCommand += ` --chaos ${chaos}`;
+    if (quality && quality !== 1) mjCommand += ` --q ${quality}`;
+    
+    // Add character reference
+    if (cref) {
+      mjCommand += ` --cref ${cref}`;
+      if (cw && cw !== 100) mjCommand += ` --cw ${cw}`;
+    }
+    
+    // Add style reference
+    if (sref) {
+      mjCommand += ` --sref ${sref}`;
+      if (sw && sw !== 100) mjCommand += ` --sw ${sw}`;
+    }
+    
+    console.log(`🎨 [MJ Proxy] Sending command: ${mjCommand.substring(0, 100)}...`);
+    
+    // Send the command
+    const sentMessage = await channel.send(mjCommand);
+    const commandTimestamp = sentMessage.createdTimestamp;
+    
+    console.log(`⏳ [MJ Proxy] Waiting for Midjourney response...`);
+    
+    // Poll for Midjourney response
+    const maxWaitTime = 120000; // 2 minutes
+    const pollInterval = 3000; // 3 seconds
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      
+      // Fetch recent messages
+      const messages = await channel.messages.fetch({ limit: 10 });
+      
+      // Look for Midjourney's response
+      for (const msg of messages.values()) {
+        // Check if from Midjourney bot
+        if (msg.author.id !== MIDJOURNEY_BOT_ID) continue;
+        
+        // Check if after our command
+        if (msg.createdTimestamp <= commandTimestamp) continue;
+        
+        // Check for attachments (completed image)
+        if (msg.attachments.size > 0) {
+          const attachment = msg.attachments.first();
+          if (attachment) {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            console.log(`✅ [MJ Proxy] Image generated in ${elapsed}s`);
+            
+            return res.json({
+              status: 'completed',
+              image_url: attachment.url,
+              filename: attachment.name,
+              width: attachment.width || 0,
+              height: attachment.height || 0,
+              generation_time: `${elapsed}s`,
+              command: mjCommand,
+              message_id: msg.id
+            });
+          }
+        }
+      }
+      
+      console.log(`⏳ [MJ Proxy] Still waiting... (${Math.floor((Date.now() - startTime) / 1000)}s elapsed)`);
+    }
+    
+    // Timeout
+    return res.status(408).json({
+      status: 'timeout',
+      error: `Generation timed out after ${maxWaitTime / 1000}s`,
+      note: 'Check Discord channel manually - generation might still complete'
+    });
+    
+  } catch (error: any) {
+    console.error('❌ [MJ Proxy] Error:', error);
+    return res.status(500).json({
+      status: 'error',
+      error: error.message || String(error)
+    });
+  }
+  })().catch((e: any) => {
+    console.error('❌ [MJ Proxy] Uncaught error:', e);
+    res.status(500).json({ status: 'error', error: String(e?.message || e) });
+  });
+});
+
+// ============================================
+// Health Check Endpoints
+// ============================================
+
+// Letta health check
+app.get('/tool/letta-health', (req, res) => {
+  (async () => {
+    const baseUrl = (process.env.LETTA_BASE_URL || 'https://api.letta.com').replace(/\/$/, '');
+    const agentId = process.env.LETTA_AGENT_ID;
+    const token = process.env.LETTA_API_KEY;
+    
+    if (!agentId || !token) {
+      res.status(400).json({ ok: false, error: 'Missing LETTA_AGENT_ID or LETTA_API_KEY' });
+      return;
+    }
+    
+    const imageUrl = typeof req.query.image_url === 'string' ? req.query.image_url : undefined;
+    const lc = new LettaClient({ token, baseUrl, timeout: 60000 } as any);
+    
+    const content: any = imageUrl
+      ? [
+          { type: 'image', source: { type: 'url', url: imageUrl } },
+          { type: 'text', text: 'Health check: describe this image.' }
+        ]
+      : [{ type: 'text', text: 'this is a Healthtest by Cursor' }];
+    
+    const t0 = Date.now();
+    await lc.agents.messages.create(agentId, { messages: [{ role: 'user', content }] });
+    const dt = Date.now() - t0;
+    
+    res.json({ ok: true, baseUrl, vision: !!imageUrl, latency_ms: dt });
+  })().catch((e: any) => {
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
+  });
+});
+
+// General health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'Mioré Discord Bot',
+    uptime: process.uptime(),
+    discord: client.isReady() ? 'connected' : 'disconnected',
+    tts: ENABLE_TTS ? 'enabled' : 'disabled',
+    autonomous: ENABLE_AUTONOMOUS ? 'enabled' : 'disabled',
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ============================================
+// Start Server
+// ============================================
+
 app.listen(PORT, () => {
-  console.log('Listening on port', PORT);
+  console.log('');
+  console.log('🔥 ============================================');
+  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log('🔥 ============================================');
+  console.log('');
+  console.log('Services:');
+  console.log(`  - Discord Bot: ${RESPOND_TO_DMS || RESPOND_TO_MENTIONS || RESPOND_TO_GENERIC ? 'Enabled' : 'Disabled'}`);
+  console.log(`  - Heartbeat: ${ENABLE_TIMER ? 'Enabled' : 'Disabled'}`);
+  console.log(`  - TTS API: ${ENABLE_TTS ? 'Enabled' : 'Disabled'}`);
+  console.log(`  - Bot-Loop Prevention: ${ENABLE_AUTONOMOUS ? 'ENABLED 🔒' : 'DISABLED ⚠️'}`);
+  console.log('');
+  
   const token = String(process.env.DISCORD_TOKEN || '').trim();
   client.login(token);
   startRandomEventTimer();
 });
+

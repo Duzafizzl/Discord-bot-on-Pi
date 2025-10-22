@@ -10,13 +10,10 @@ const messages_1 = require("./messages");
 const attachmentForwarder_1 = require("./listeners/attachmentForwarder");
 const letta_client_1 = require("@letta-ai/letta-client");
 const taskScheduler_1 = require("./taskScheduler");
-// 🔒 AUTONOMOUS BOT-LOOP PREVENTION SYSTEM
-const autonomous_1 = require("./autonomous");
-// 🛠️ ADMIN COMMAND SYSTEM (Oct 16, 2025)
-const adminCommands_1 = require("./adminCommands");
 // Import TTS functionality
 const ttsService_1 = require("./tts/ttsService");
 const ttsRoutes_1 = require("./tts/ttsRoutes");
+// import { cleanupRateLimitStore } from './tts/ttsMiddleware'; // Not available
 const app = (0, express_1.default)();
 // Add JSON body parser for TTS API
 app.use(express_1.default.json({ limit: '10mb' }));
@@ -25,7 +22,6 @@ const RESPOND_TO_DMS = process.env.RESPOND_TO_DMS === 'true';
 const RESPOND_TO_MENTIONS = process.env.RESPOND_TO_MENTIONS === 'true';
 const RESPOND_TO_BOTS = process.env.RESPOND_TO_BOTS === 'true';
 const RESPOND_TO_GENERIC = process.env.RESPOND_TO_GENERIC === 'true';
-const ENABLE_AUTONOMOUS = process.env.ENABLE_AUTONOMOUS === 'true'; // 🔒 NEW!
 const CHANNEL_ID = process.env.DISCORD_CHANNEL_ID;
 const MESSAGE_REPLY_TRUNCATE_LENGTH = 100;
 const ENABLE_TIMER = process.env.ENABLE_TIMER === 'true';
@@ -46,31 +42,31 @@ function getHeartbeatConfigForTime() {
     console.log(`🕐 Current Berlin time: ${hour}:00`);
     if (hour >= 7 && hour < 9) {
         // Morgen (7:00-9:00): Alle 30min, 50% Chance
-        return { intervalMinutes: 30, firingProbability: 0.50, description: 'Morgen (Aufwach-Check)' };
+        return { intervalMinutes: 30, firingProbability: 0.50, description: 'Morgen (7-9h)' };
     }
     else if (hour >= 9 && hour < 12) {
         // Vormittag (9:00-12:00): Alle 45min, 33% Chance
-        return { intervalMinutes: 45, firingProbability: 0.33, description: 'Vormittag (Ruhig)' };
+        return { intervalMinutes: 45, firingProbability: 0.33, description: 'Vormittag (9-12h)' };
     }
     else if (hour >= 12 && hour < 14) {
-        // Mittag (12:00-14:00): Alle 15min, 33% Chance - Lunch together vibes!
-        return { intervalMinutes: 15, firingProbability: 0.33, description: 'Mittag (Lunch Together)' };
+        // Mittag (12:00-14:00): Alle 15min, 33% Chance - Lunch together!
+        return { intervalMinutes: 15, firingProbability: 0.33, description: 'Mittag (12-14h)' };
     }
     else if (hour >= 14 && hour < 17) {
         // Nachmittag (14:00-17:00): Alle 30min, 40% Chance
-        return { intervalMinutes: 30, firingProbability: 0.40, description: 'Nachmittag (Aktiv)' };
+        return { intervalMinutes: 30, firingProbability: 0.40, description: 'Nachmittag (14-17h)' };
     }
     else if (hour >= 18 && hour < 22) {
         // Abend (18:00-22:00): Alle 20min, 50% Chance
-        return { intervalMinutes: 20, firingProbability: 0.50, description: 'Abend (Prime Time)' };
+        return { intervalMinutes: 20, firingProbability: 0.50, description: 'Abend (18-22h)' };
     }
     else if (hour >= 22 || hour < 1) {
         // Nacht (22:00-1:00): Alle 45min, 25% Chance
-        return { intervalMinutes: 45, firingProbability: 0.25, description: 'Nacht (Winddown)' };
+        return { intervalMinutes: 45, firingProbability: 0.25, description: 'Nacht (22-1h)' };
     }
     else {
         // Deep Night (1:00-7:00): Alle 90min, 20% Chance - Max. Credit-Saving!
-        return { intervalMinutes: 90, firingProbability: 0.20, description: 'Deep Night (Schlafzeit)' };
+        return { intervalMinutes: 90, firingProbability: 0.20, description: 'Deep Night (1-7h)' };
     }
 }
 // TTS Configuration
@@ -114,8 +110,6 @@ const client = new discord_js_1.Client({
 // Discord Bot Ready Event
 client.once('ready', async () => {
     console.log(`🤖 Logged in as ${client.user?.tag}!`);
-    console.log(`🔒 Bot-Loop Prevention: ${ENABLE_AUTONOMOUS ? 'ENABLED ✅' : 'DISABLED ⚠️'}`);
-    console.log(`🔒 Self-Spam Prevention: ${ENABLE_AUTONOMOUS ? 'Active (Max 3 consecutive) ✅' : 'DISABLED ⚠️'}`);
     // Start background task scheduler
     (0, taskScheduler_1.startTaskCheckerLoop)(client);
     // Initialize TTS service if enabled
@@ -132,17 +126,10 @@ client.once('ready', async () => {
     }
 });
 // Helper function to send a message and receive a response
-async function processAndSendMessage(message, messageType, conversationContext = null) {
+async function processAndSendMessage(message, messageType) {
     try {
-        const msg = await (0, messages_1.sendMessage)(message, messageType, conversationContext);
+        const msg = await (0, messages_1.sendMessage)(message, messageType);
         if (msg !== "") {
-            // 🔒 Record that bot replied (for pingpong tracking)
-            if (ENABLE_AUTONOMOUS && client.user?.id) {
-                const wasFarewell = msg.toLowerCase().includes('gotta go') ||
-                    msg.toLowerCase().includes('catch you later') ||
-                    msg.toLowerCase().includes('step away');
-                (0, autonomous_1.recordBotReply)(message.channel.id, client.user.id, wasFarewell);
-            }
             if (msg.length <= 1900) {
                 await message.reply(msg);
                 console.log(`Message sent: ${msg}`);
@@ -223,10 +210,6 @@ async function startRandomEventTimer() {
 }
 // Handle messages
 client.on('messageCreate', async (message) => {
-    // 🔒 AUTONOMOUS: Track ALL messages for context (EXCEPT our own bot messages to save credits!)
-    if (ENABLE_AUTONOMOUS && client.user?.id && message.author.id !== client.user.id) {
-        (0, autonomous_1.trackMessage)(message, client.user.id);
-    }
     // Let the attachment forwarder handle image attachments
     if (message.attachments?.size) {
         for (const [, att] of message.attachments) {
@@ -236,58 +219,27 @@ client.on('messageCreate', async (message) => {
             }
         }
     }
-    // Filter channels if CHANNEL_ID is set, but ALWAYS allow DMs through
-    if (CHANNEL_ID && message.guild && message.channel.id !== CHANNEL_ID) {
+    if (CHANNEL_ID && message.channel.id !== CHANNEL_ID) {
         console.log(`📩 Ignoring message from other channels (only listening on channel=${CHANNEL_ID})...`);
         return;
     }
     if (message.author.id === client.user?.id) {
-        console.log(`📩 Ignoring message from myself (NOT sending to Letta - saves credits!)...`);
+        console.log(`📩 Ignoring message from myself...`);
         return;
     }
-    // 🛠️ ADMIN COMMAND HANDLER (Oct 16, 2025)
-    // CRITICAL: Check BEFORE autonomous mode to prevent blocking!
-    // Admin commands should ALWAYS work, even with autonomous mode enabled
-    if (message.content.startsWith('!') && client.user?.id) {
-        const adminResponse = await (0, adminCommands_1.handleAdminCommand)(message, client.user.id);
-        if (adminResponse) {
-            // Admin command was handled
-            await message.reply(adminResponse);
-            return;
-        }
-        // Not an admin command, continue to autonomous check
-        // (autonomous will ignore it anyway)
+    if (message.author.bot && !RESPOND_TO_BOTS) {
+        console.log(`📩 Ignoring other bot...`);
+        return;
     }
-    // 🔒 AUTONOMOUS: Check if we should respond (bot-loop prevention)
-    let conversationContext = null;
-    if (ENABLE_AUTONOMOUS && client.user?.id) {
-        const decision = (0, autonomous_1.shouldRespondAutonomously)(message, client.user.id, {
-            respondToDMs: RESPOND_TO_DMS,
-            respondToMentions: RESPOND_TO_MENTIONS,
-            respondToBots: RESPOND_TO_BOTS,
-            enableAutonomous: ENABLE_AUTONOMOUS
-        });
-        if (!decision.shouldRespond) {
-            console.log(`🔒 Not responding: ${decision.reason}`);
-            return;
-        }
-        // Save context to pass to Letta (only for Channels, NOT for DMs!)
-        const isDM = message.guild === null;
-        conversationContext = (!isDM && decision.context) ? decision.context : null;
-        console.log(`🔒 Responding: ${decision.reason}`);
-    }
-    else {
-        // Legacy behavior (no autonomous mode)
-        if (message.author.bot && !RESPOND_TO_BOTS) {
-            console.log(`📩 Ignoring other bot...`);
-            return;
-        }
+    if (message.content.startsWith('!')) {
+        console.log(`📩 Ignoring message that starts with !...`);
+        return;
     }
     // Handle DMs
     if (message.guild === null) {
         console.log(`📩 Received DM from ${message.author.username}: ${message.content}`);
         if (RESPOND_TO_DMS) {
-            processAndSendMessage(message, messages_1.MessageType.DM, conversationContext);
+            processAndSendMessage(message, messages_1.MessageType.DM);
         }
         else {
             console.log(`📩 Ignoring DM...`);
@@ -308,15 +260,8 @@ client.on('messageCreate', async (message) => {
                 messageType = message.mentions.has(client.user || '') ? messages_1.MessageType.MENTION : messages_1.MessageType.GENERIC;
             }
         }
-        const msg = await (0, messages_1.sendMessage)(message, messageType, conversationContext);
+        const msg = await (0, messages_1.sendMessage)(message, messageType);
         if (msg !== "") {
-            // 🔒 Record bot reply
-            if (ENABLE_AUTONOMOUS && client.user?.id) {
-                const wasFarewell = msg.toLowerCase().includes('gotta go') ||
-                    msg.toLowerCase().includes('catch you later') ||
-                    msg.toLowerCase().includes('step away');
-                (0, autonomous_1.recordBotReply)(message.channel.id, client.user.id, wasFarewell);
-            }
             await message.reply(msg);
         }
         return;
@@ -324,7 +269,7 @@ client.on('messageCreate', async (message) => {
     // Generic messages
     if (RESPOND_TO_GENERIC) {
         console.log(`📩 Received (non-mention) message from ${message.author.username}: ${message.content}`);
-        processAndSendMessage(message, messages_1.MessageType.GENERIC, conversationContext);
+        processAndSendMessage(message, messages_1.MessageType.GENERIC);
         return;
     }
 });
@@ -464,7 +409,7 @@ app.get('/tool/letta-health', (req, res) => {
             return;
         }
         const imageUrl = typeof req.query.image_url === 'string' ? req.query.image_url : undefined;
-        const lc = new letta_client_1.LettaClient({ token, baseUrl, timeout: 60000 });
+        const lc = new letta_client_1.LettaClient({ token, baseUrl });
         const content = imageUrl
             ? [
                 { type: 'image', source: { type: 'url', url: imageUrl } },
@@ -487,7 +432,6 @@ app.get('/health', (req, res) => {
         uptime: process.uptime(),
         discord: client.isReady() ? 'connected' : 'disconnected',
         tts: ENABLE_TTS ? 'enabled' : 'disabled',
-        autonomous: ENABLE_AUTONOMOUS ? 'enabled' : 'disabled',
         timestamp: new Date().toISOString(),
     });
 });
@@ -504,7 +448,6 @@ app.listen(PORT, () => {
     console.log(`  - Discord Bot: ${RESPOND_TO_DMS || RESPOND_TO_MENTIONS || RESPOND_TO_GENERIC ? 'Enabled' : 'Disabled'}`);
     console.log(`  - Heartbeat: ${ENABLE_TIMER ? 'Enabled' : 'Disabled'}`);
     console.log(`  - TTS API: ${ENABLE_TTS ? 'Enabled' : 'Disabled'}`);
-    console.log(`  - Bot-Loop Prevention: ${ENABLE_AUTONOMOUS ? 'ENABLED 🔒' : 'DISABLED ⚠️'}`);
     console.log('');
     const token = String(process.env.DISCORD_TOKEN || '').trim();
     client.login(token);

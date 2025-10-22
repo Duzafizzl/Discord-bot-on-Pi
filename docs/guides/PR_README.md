@@ -24,7 +24,7 @@ Kurzüberblick über die Änderungen in diesem PR. Fokus: zuverlässige Ausliefe
 - Hygiene & Safety
   - `.gitignore` für `.env`, Keys, Logs, `node_modules`, JS‑Duplikate
   - Entfernte transpilierten JS‑Duplikate in `src/` (wir committen TS)
-  - `ENV_TEMPLATE.md` für lokale `.env`‑Erstellung (keine Secrets im Repo)
+- `.env.template` für lokale `.env`‑Erstellung (keine Secrets im Repo)
 
 ## Files touched
 - `src/messages.ts`: Streaming/Chunking/Timeout‑Verbesserungen, Logs
@@ -34,7 +34,7 @@ Kurzüberblick über die Änderungen in diesem PR. Fokus: zuverlässige Ausliefe
 - `.gitignore`, `ENV_TEMPLATE.md`, `MIORE_CHANGES.md`, `CURSOR_HANDOFF.md`
 
 ## Setup (no secrets)
-1) `.env` lokal anlegen gemäß `ENV_TEMPLATE.md` (nicht committen)
+1) `.env` lokal anlegen via `cp .env.template .env` (nicht committen)
 2) Install: `npm install`
 3) Start lokal (Timer aus für Tests):
 ```bash
@@ -60,3 +60,4 @@ ENABLE_TIMER=false npm start
 - Falls ein Ziel‑Channel nicht sendbar ist, wird geloggt; optionaler Fallback‑Channel kann leicht ergänzt werden.
 
 Danke fürs Review! Feedback willkommen – besonders zu Streaming‑Grenzfällen und Bildgrößen.
+

@@ -2,6 +2,56 @@ import { Client, Events } from "discord.js";
 import { LettaClient } from "@letta-ai/letta-client";
 import axios from "axios";
 
+// ===== CHUNKING UTILITIES (for long Letta responses) =====
+function chunkText(text: string, limit: number): string[] {
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    let end = Math.min(i + limit, text.length);
+    let slice = text.slice(i, end);
+    if (end < text.length) {
+      const lastNewline = slice.lastIndexOf('\n');
+      if (lastNewline > Math.floor(limit * 0.6)) {
+        end = i + lastNewline + 1;
+        slice = text.slice(i, end);
+      }
+    }
+    chunks.push(slice);
+    i = end;
+  }
+  return chunks;
+}
+
+async function sendChunkSeries(
+  msg: any,
+  chunks: string[],
+  preferReply: boolean = true
+): Promise<void> {
+  if (!chunks.length) return;
+  try {
+    // Send first chunk as reply if preferred
+    if (preferReply && typeof msg.reply === 'function') {
+      await msg.reply(chunks[0]);
+    } else if (typeof msg.channel?.send === 'function') {
+      await msg.channel.send(chunks[0]);
+    } else {
+      await msg.send(chunks[0]);
+    }
+    
+    // Send remaining chunks to channel with delay
+    for (let i = 1; i < chunks.length; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      if (typeof msg.channel?.send === 'function') {
+        await msg.channel.send(chunks[i]);
+      } else {
+        await msg.send(chunks[i]);
+      }
+    }
+  } catch (err) {
+    console.error("❌ Error sending chunked message:", err);
+  }
+}
+
 // ===== SECURITY & PERFORMANCE CONFIGS =====
 const ALLOWED_IMAGE_DOMAINS = [
   'cdn.discordapp.com',
@@ -10,7 +60,7 @@ const ALLOWED_IMAGE_DOMAINS = [
 ];
 const MAX_IMAGES_PER_MESSAGE = 10; // Discord's limit
 const MAX_IMAGE_DOWNLOAD_SIZE = 25 * 1024 * 1024; // 25MB
-const REQUEST_TIMEOUT = 20000; // 20s
+const REQUEST_TIMEOUT = 90000; // 90s (increased for large base64 uploads to Letta)
 const SAFE_TARGET_BYTES = 4 * 1024 * 1024; // 4MB safe target
 const MAX_BYTES = 5 * 1024 * 1024; // 5MB absolute limit
 
@@ -197,11 +247,30 @@ export function registerAttachmentForwarder(client: Client) {
     processingUsers.set(userId, now);
 
     let typingInterval: NodeJS.Timeout | null = null;
+    let longerTimeout: NodeJS.Timeout | null = null; // For "taking longer" message
+    let processingReply: any = null; // Store reply for editing
     
     try {
       // Show typing while processing
       try {
         await (msg.channel as any).sendTyping();
+        
+        // 🔔 Send immediate processing message
+        const processingMsg = urls.length === 1 
+          ? "🖼️ Verarbeite dein Bild..." 
+          : `🖼️ Verarbeite deine ${urls.length} Bilder...`;
+        processingReply = await msg.reply(processingMsg);
+        
+        // 🕐 Set up "taking longer" message after 60 seconds
+        longerTimeout = setTimeout(async () => {
+          try {
+            if (processingReply) {
+              await processingReply.edit(processingMsg + "\n⏱️ Dauert noch etwas länger, hab Geduld...");
+            }
+          } catch (err) {
+            console.warn('[AttachmentForwarder] Could not edit processing message:', err);
+          }
+        }, 60000); // After 60 seconds
       } catch (err) {
         console.error('[Discord] Failed to send typing indicator:', err instanceof Error ? err.message : err);
       }
@@ -213,10 +282,19 @@ export function registerAttachmentForwarder(client: Client) {
       }, 8000);
 
       const userText = (msg.content || '').trim();
-      const reply = await forwardImagesToLetta(urls, userId, userText);
+      const reply = await forwardImagesToLetta(urls, userId, userText, processingReply);
       
       if (reply && reply.trim()) {
-        await msg.reply(reply);
+        // CHUNKING: Split long responses to avoid Discord's 2000 char limit
+        const DISCORD_LIMIT = 1900; // Keep some margin under 2000
+        if (reply.length > DISCORD_LIMIT) {
+          console.log(`📦 Reply is ${reply.length} chars, chunking into multiple messages...`);
+          const chunks = chunkText(reply, DISCORD_LIMIT);
+          console.log(`📦 Sending ${chunks.length} chunks to Discord`);
+          await sendChunkSeries(msg, chunks, true);
+        } else {
+          await msg.reply(reply);
+        }
       } else {
         console.warn('[Letta] Empty reply received, not sending message');
       }
@@ -254,6 +332,12 @@ export function registerAttachmentForwarder(client: Client) {
         clearInterval(typingInterval);
         typingInterval = null;
       }
+      
+      // Clear "taking longer" timeout if it exists
+      if (longerTimeout) {
+        clearTimeout(longerTimeout);
+      }
+      
       // Clean up rate limit after a delay
       setTimeout(() => processingUsers.delete(userId), 10000);
     }
@@ -378,7 +462,8 @@ async function compressImage(buffer: Buffer, mediaType: string, index: number, t
 async function forwardImagesToLetta(
   urls: string[],
   userId: string,
-  userText?: string
+  userText?: string,
+  statusMessage: any = null
 ): Promise<string> {
   const token = process.env.LETTA_API_KEY || process.env.LETTA_KEY || '';
   const baseUrl = (process.env.LETTA_BASE_URL || process.env.LETTA_API || 'https://api.letta.com').replace(/\/$/, '');
@@ -388,41 +473,22 @@ async function forwardImagesToLetta(
     throw new Error("LETTA_AGENT_ID and LETTA_API_KEY (or AGENT_ID/LETTA_KEY) must be set");
   }
 
-  const client = new LettaClient({ token, baseUrl } as any);
+  const client = new LettaClient({ 
+    token, 
+    baseUrl,
+    timeout: REQUEST_TIMEOUT  // 90s timeout for image uploads
+  } as any);
 
-  const payloadUrl: any = {
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...urls.map(u => ({ type: 'image', source: { type: 'url', url: u } })),
-          ...(userText && userText.trim() ? [{ type: 'text', text: userText }] : [{ type: 'text', text: `Describe the image sent by user ${userId}.` }])
-        ]
-      }
-    ]
-  };
+  // 🔧 Direct base64 upload (URL upload had reliability issues)
+  console.log(`📦 Processing ${urls.length} image(s) via base64 upload, hasText=${!!(userText && userText.trim())}`);
   
-  console.log(`🧾 Sending ${urls.length} image(s) via URL, hasText=${!!(userText && userText.trim())}`);
-
-  // Try URL-based upload first (fastest)
   try {
-    const ns: any = await (client as any).agents.messages.create(agentId, payloadUrl as any);
-    const text = extractAssistantText(ns);
-    console.log('✅ URL-based upload successful');
-    return text || '';
-  } catch (e: any) {
-    const status = e?.status || e?.response?.status;
-    console.warn(`⚠️ URL upload failed (status=${status}), falling back to base64`);
-    
-    // Fallback: Download and convert to base64 with compression
-    try {
-      console.log(`📦 Processing ${urls.length} image(s) for base64 upload...`);
-      const base64Images: any[] = [];
-      let skippedCount = 0;
-      let compressedCount = 0;
+    const base64Images: any[] = [];
+    let skippedCount = 0;
+    let compressedCount = 0;
 
-      // Process images sequentially to avoid memory spikes
-      for (let i = 0; i < urls.length; i++) {
+    // Process images sequentially to avoid memory spikes
+    for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
         
         // Download image
@@ -432,17 +498,30 @@ async function forwardImagesToLetta(
           continue;
         }
 
-        let { buffer, mediaType } = downloaded;
+      let { buffer, mediaType } = downloaded;
 
-        // CRITICAL: For multi-image requests, ALWAYS check dimensions (Letta 2000px limit!)
-        const isMultiImage = urls.length > 1;
-        const needsCompression = buffer.length > SAFE_TARGET_BYTES || isMultiImage;
+      // CRITICAL: ALWAYS check dimensions (Letta 2000px limit!) even for single images
+      const isMultiImage = urls.length > 1;
+      // Force dimension check for ALL images (not just multi-image)
+      const needsCompression = buffer.length > SAFE_TARGET_BYTES || true; // Always check!
         
         if (needsCompression) {
           if (buffer.length > SAFE_TARGET_BYTES) {
             console.log(`🗜️ [${i + 1}/${urls.length}] Image exceeds safe size limit, compressing...`);
           } else {
             console.log(`📐 [${i + 1}/${urls.length}] Checking dimensions for multi-image request...`);
+          }
+          
+          // Update status message with compression info
+          if (statusMessage) {
+            try {
+              const baseMsg = urls.length === 1 
+                ? "🖼️ Verarbeite dein Bild..." 
+                : `🖼️ Verarbeite deine ${urls.length} Bilder...`;
+              await statusMessage.edit(`${baseMsg}\n🗜️ Komprimiere Bild ${i + 1}/${urls.length}...`);
+            } catch (err) {
+              console.warn('[Status] Could not update compression status:', err instanceof Error ? err.message : err);
+            }
           }
           
           const compressed = await compressImage(buffer, mediaType, i, urls.length, isMultiImage);
@@ -472,7 +551,26 @@ async function forwardImagesToLetta(
       }
 
       console.log(`📊 Base64 processing complete: ${base64Images.length} images, ${compressedCount} compressed, ${skippedCount} skipped`);
+      console.log(`🔍 [DEBUG] About to check statusMessage update...`);
 
+      // Update status with final processing info
+      if (statusMessage && compressedCount > 0) {
+        console.log(`🔍 [DEBUG] Updating status message...`);
+        try {
+          const baseMsg = urls.length === 1 
+            ? "🖼️ Verarbeite dein Bild..." 
+            : `🖼️ Verarbeite deine ${urls.length} Bilder...`;
+          const compressMsg = compressedCount === 1 
+            ? "✅ 1 Bild komprimiert" 
+            : `✅ ${compressedCount} Bilder komprimiert`;
+          await statusMessage.edit(`${baseMsg}\n${compressMsg}\n📤 Sende an Letta...`);
+          console.log(`🔍 [DEBUG] Status message updated successfully`);
+        } catch (err) {
+          console.warn('[Status] Could not update final status:', err instanceof Error ? err.message : err);
+        }
+      }
+
+      console.log(`🔍 [DEBUG] Checking if base64Images.length === 0... (length=${base64Images.length})`);
       if (base64Images.length === 0) {
         // Provide specific reason why all images failed
         if (skippedCount === urls.length) {
@@ -487,6 +585,7 @@ async function forwardImagesToLetta(
         }
       }
 
+      console.log(`🔍 [DEBUG] Building payload for ${base64Images.length} image(s)...`);
       const payloadB64: any = {
         messages: [
           {
@@ -501,8 +600,49 @@ async function forwardImagesToLetta(
         ]
       };
 
-      const ns2: any = await (client as any).agents.messages.create(agentId, payloadB64 as any);
-      const text2 = extractAssistantText(ns2);
+      console.log(`🔍 [DEBUG] Payload built, calling Letta API (STREAMING)...`);
+      // ✅ STREAMING API (wie gestern - funktioniert!)
+      const response: any = await (client as any).agents.messages.createStream(agentId, payloadB64 as any);
+      console.log(`🔍 [DEBUG] Stream started, collecting chunks...`);
+      let text2 = '';
+      
+      // 🔄 Stream mit Error-Handling (terminated/socket errors)
+      try {
+        for await (const chunk of response) {
+            // 🔍 LOG ALL CHUNKS COMPLETELY to debug send_message issue
+            console.log(`📦 [CHUNK] FULL:`, JSON.stringify(chunk, null, 2).substring(0, 1000));
+            
+            if (chunk.messageType === 'assistant_message') {
+                text2 += chunk.content;
+                console.log('💬 Assistant chunk:', chunk.content.substring(0, 80) + '...');
+            }
+            // 🔥 EXTRACT message from send_message tool call!
+            else if (chunk.messageType === 'tool_call_message' && chunk.toolCall?.name === 'send_message') {
+                try {
+                    const args = JSON.parse(chunk.toolCall.arguments);
+                    if (args.message) {
+                        console.log(`✅ [SEND_MESSAGE] Extracted message from tool call (${args.message.length} chars)`);
+                        text2 += args.message;
+                    }
+                } catch (e) {
+                    console.error('❌ Failed to parse send_message arguments:', e);
+                }
+            }
+        }
+        console.log(`🔍 [DEBUG] Stream complete! Collected text length: ${text2?.length || 0} chars`);
+      } catch (streamError: any) {
+        console.error('❌ Error processing stream:', streamError);
+        const errMsg = streamError instanceof Error ? streamError.message : String(streamError);
+        
+        // Socket termination errors - return partial text if we got any
+        if (/terminated|other side closed|socket.*closed|UND_ERR_SOCKET/i.test(errMsg)) {
+          console.log(`🔌 Stream terminated early - returning collected text (${text2.length} chars)`);
+          // Continue execution - return what we have
+        } else {
+          // Other errors - still try to return partial text
+          console.log(`⚠️ Stream error - attempting to return partial text (${text2.length} chars)`);
+        }
+      }
 
       // Build informative response
       const noteParts: string[] = [];
@@ -515,9 +655,10 @@ async function forwardImagesToLetta(
       const note = noteParts.length ? `_(${noteParts.join(', ')})_\n\n` : '';
       
       return (note + (text2 || '')).trim();
-    } catch (e2: any) {
-      const detail = (e2?.body?.detail || e2?.response?.data || e2?.message || '').toString();
-      console.error('[Letta] Base64 upload failed:', e2 instanceof Error ? e2.message : e2);
+    } catch (e: any) {
+      const detail = (e?.body?.detail || e?.response?.data || e?.message || '').toString();
+      const statusCode = e?.statusCode || e?.response?.status || 0;
+      console.error('[Letta] Base64 upload failed:', e instanceof Error ? e.message : e);
       
       // Provide specific error messages based on failure type
       if (/exceeds\s*5\s*MB/i.test(detail) || /payload.*large/i.test(detail)) {
@@ -530,9 +671,10 @@ async function forwardImagesToLetta(
         return "❌ API timeout - processing took too long.\n💡 Please use smaller images or try later.";
       } else if (/network|ECONNREFUSED|ENOTFOUND/i.test(detail)) {
         return "❌ Letta API unreachable.\n💡 Please try again later or contact admin.";
+      } else if (statusCode === 502 || statusCode === 503 || /bad gateway|service unavailable/i.test(detail)) {
+        return "❌ Letta server having issues (502/503 error).\n💡 Their LLM backend is overloaded - please try again in 1-2 minutes.";
       }
       
-      throw e2;
+      throw e;
     }
-  }
 }
