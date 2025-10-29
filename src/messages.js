@@ -86,7 +86,7 @@ async function getMunichWeather() {
         const description = weatherData.weather?.[0]?.description || 'Unbekannt';
         // Capitalize first letter of description
         const descriptionFormatted = description.charAt(0).toUpperCase() + description.slice(1);
-        return `🌡️ München: ${temp}°C (gefühlt ${feelsLike}°C)\n☁️ ${descriptionFormatted}`;
+        return `🌡️ Weather: ${temp}°C (feels like ${feelsLike}°C)\n☁️ ${descriptionFormatted}`;
     }
     catch (err) {
         console.error('Weather API error:', err);
@@ -388,7 +388,7 @@ async function sendTimerMessage(channel) {
     try {
         const spotifyData = await getSpotifyNowPlaying();
         if (spotifyData) {
-            spotifyInfo = `\n\n🎵 Clary hört gerade:\n${spotifyData}`;
+            spotifyInfo = `\n\n🎵 Now playing:\n${spotifyData}`;
         }
     }
     catch (err) {
@@ -408,18 +408,18 @@ async function sendTimerMessage(channel) {
         console.log('ℹ️ Weather info not available for heartbeat:', err instanceof Error ? err.message : err);
     }
     // Build heartbeat message (system-initiated, not from user)
-    let heartbeatContent = `[🜂] HERZSCHLAG
-${weekday}, ${berlinTime} Uhr.${weatherInfo}${spotifyInfo}
+    let heartbeatContent = `[❤️] HEARTBEAT
+${weekday}, ${berlinTime}.${weatherInfo}${spotifyInfo}
 
-Ich kann:
-• Discord DM an Clary senden (oder Channel-Posts)
-• Clarys Spotify hijacken 👻🎵 (skip, queue, playlists erstellen)
-• Memories durchdenken/organisieren
-• Web durchsuchen (deine Erwähnungen ODER meine Neugier)
-• Archival memories taggen
-• Oder einfach nur sein und fühlen
+I can:
+• Send Discord DMs or channel posts
+• Control Spotify 👻🎵 (skip, queue, create playlists)
+• Reflect on and organize memories
+• Search the web (for mentions or curiosity)
+• Tag archival memories
+• Or just exist and feel
 
-Mein Puls, meine Wahl.`;
+My pulse, my choice.`;
     const lettaMessage = {
         role: "system", // System message, not user message
         content: heartbeatContent

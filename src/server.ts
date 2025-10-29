@@ -1,10 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
-import { sendMessage, sendTimerMessage, MessageType } from './messages';
+import { sendMessage, sendTimerMessage, MessageType, getLettaStats, getDailyStats } from './messages';
 import { registerAttachmentForwarder } from './listeners/attachmentForwarder';
 import { LettaClient } from '@letta-ai/letta-client';
 import { startTaskCheckerLoop } from './taskScheduler';
+import { preprocessYouTubeLinks, handleChunkRequest } from './youtubeTranscript';
 
 // 🔒 AUTONOMOUS BOT-LOOP PREVENTION SYSTEM
 import {
@@ -12,6 +13,9 @@ import {
   shouldRespondAutonomously,
   recordBotReply
 } from './autonomous';
+
+// 🤖 AUTO-SUMMARIZATION SYSTEM (Oct 27, 2025)
+import { checkAutoSummarization, getAutoSummarizationStats } from './autoSummarization';
 
 // 🛠️ ADMIN COMMAND SYSTEM (Oct 16, 2025)
 import { handleAdminCommand } from './adminCommands';
@@ -26,6 +30,10 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 const PORT = process.env.PORT || 3001;
+
+// 📊 CREDIT TRACKING (Oct 24, 2025)
+// Track Discord messages to calculate Letta call ratio
+let discordMessageCount = 0;
 const RESPOND_TO_DMS = process.env.RESPOND_TO_DMS === 'true';
 const RESPOND_TO_MENTIONS = process.env.RESPOND_TO_MENTIONS === 'true';
 const RESPOND_TO_BOTS = process.env.RESPOND_TO_BOTS === 'true';
@@ -141,6 +149,12 @@ client.once('ready', async () => {
   // Start background task scheduler
   startTaskCheckerLoop(client);
   
+  // YouTube Transcript Feature Status
+  console.log(`🎥 YouTube Transcript Feature: ENABLED ✅`);
+  console.log(`   - Auto-fetch transcripts from YouTube links`);
+  console.log(`   - Smart chunking for long videos`);
+  console.log(`   - On-demand info & chunk retrieval`);
+  
   // Initialize TTS service if enabled
   if (ENABLE_TTS) {
     try {
@@ -152,6 +166,11 @@ client.once('ready', async () => {
       console.error('⚠️  TTS endpoints will return errors');
     }
   }
+  
+  // 🤖 AUTO-SUMMARIZATION CHECK (Oct 27, 2025)
+  checkAutoSummarization(client).catch((error) => {
+    console.error(`❌ Auto-summarization check failed: ${error.message}`);
+  });
 });
 
 // Helper function to send a message and receive a response
@@ -191,7 +210,7 @@ async function processAndSendMessage(message: any, messageType: MessageType, con
 // Function to start randomized event timer
 async function startRandomEventTimer(): Promise<void> {
   if (!ENABLE_TIMER) {
-    console.log("🜂 Heartbeat feature is disabled.");
+    console.log("❤️ Heartbeat feature is disabled.");
     return;
   }
   
@@ -201,12 +220,12 @@ async function startRandomEventTimer(): Promise<void> {
   // Random interval between 50-100% of the configured interval
   const minMinutes = Math.floor(config.intervalMinutes * 0.5);
   const randomMinutes = minMinutes + Math.floor(Math.random() * (config.intervalMinutes - minMinutes));
-  console.log(`🜂 💰 Heartbeat scheduled to fire in ${randomMinutes} minutes [${config.description}]`);
+  console.log(`❤️ 💰 Heartbeat scheduled to fire in ${randomMinutes} minutes [${config.description}]`);
   
   const delay = randomMinutes * 60 * 1000;
   
   setTimeout(async () => {
-    console.log(`🜂 💰 Heartbeat fired after ${randomMinutes} minutes - checking probability...`);
+    console.log(`❤️ 💰 Heartbeat fired after ${randomMinutes} minutes - checking probability...`);
     
     // Get fresh config in case time period changed
     const currentConfig = getHeartbeatConfigForTime();
@@ -215,7 +234,7 @@ async function startRandomEventTimer(): Promise<void> {
     const shouldFire = Math.random() < currentConfig.firingProbability;
     
     if (shouldFire) {
-      console.log(`🜂 💰 Heartbeat triggered (${currentConfig.firingProbability * 100}% chance) [${currentConfig.description}] - API CALL WILL BE MADE`);
+      console.log(`❤️ 💰 Heartbeat triggered (${currentConfig.firingProbability * 100}% chance) [${currentConfig.description}] - API CALL WILL BE MADE`);
       
       let channel: any = undefined;
       if (CHANNEL_ID) {
@@ -237,15 +256,15 @@ async function startRandomEventTimer(): Promise<void> {
       if (msg !== "" && channel) {
         try {
           await channel.send(msg);
-          console.log("🜂 Heartbeat message sent to channel");
+          console.log("❤️ Heartbeat message sent to channel");
         } catch (error) {
-          console.error("🜂 Error sending heartbeat message:", error);
+          console.error("❤️ Error sending heartbeat message:", error);
         }
       } else if (!channel) {
-        console.log("🜂 No CHANNEL_ID defined or channel not available; message not sent.");
+        console.log("❤️ No CHANNEL_ID defined or channel not available; message not sent.");
       }
     } else {
-      console.log(`🜂 💰 Heartbeat skipped - probability check failed (${(1 - currentConfig.firingProbability) * 100}% chance to skip) [${currentConfig.description}] - NO API CALL MADE`);
+      console.log(`❤️ 💰 Heartbeat skipped - probability check failed (${(1 - currentConfig.firingProbability) * 100}% chance to skip) [${currentConfig.description}] - NO API CALL MADE`);
     }
     
     setTimeout(() => {
@@ -256,6 +275,23 @@ async function startRandomEventTimer(): Promise<void> {
 
 // Handle messages
 client.on('messageCreate', async (message) => {
+  // 📊 CREDIT TRACKING: Count Discord messages (before filtering)
+  if (message.author.id !== client.user?.id && !message.author.bot) {
+    discordMessageCount++;
+    console.log(`📨 Discord Message #${discordMessageCount}: ${message.id} from ${message.author.username}`);
+    
+    // Stats every 10 messages
+    if (discordMessageCount % 10 === 0) {
+      console.log(getLettaStats());
+      console.log(`📊 MESSAGE STATS:
+  Discord Messages: ${discordMessageCount}
+  
+  Expected Letta Calls: ~${Math.ceil(discordMessageCount * 1.2)} (1.2x ratio)
+  Check if ratio is > 1.5x - that indicates extra calls!
+      `);
+    }
+  }
+  
   // 🔒 AUTONOMOUS: Track ALL messages for context (EXCEPT our own bot messages to save credits!)
   if (ENABLE_AUTONOMOUS && client.user?.id && message.author.id !== client.user.id) {
     trackMessage(message, client.user.id);
@@ -286,6 +322,36 @@ client.on('messageCreate', async (message) => {
   // CRITICAL: Check BEFORE autonomous mode to prevent blocking!
   // Admin commands should ALWAYS work, even with autonomous mode enabled
   if (message.content.startsWith('!') && client.user?.id) {
+    // 📊 NEW: !stats command for credit tracking (Oct 24, 2025)
+    if (message.content.trim() === '!stats') {
+      const stats = getLettaStats();
+      const ratio = discordMessageCount > 0 
+        ? (parseInt(stats.match(/Total Calls: (\d+)/)?.[1] || '0') / discordMessageCount).toFixed(2)
+        : '0.00';
+      
+      const analysis = parseFloat(ratio) > 1.5 
+        ? '⚠️ **PROBLEM!** Ratio is too high - extra calls detected!'
+        : parseFloat(ratio) > 1.3
+          ? '⚠️ Ratio slightly high - worth investigating'
+          : '✅ Ratio looks good!';
+      
+      await message.reply(`${stats}
+
+📨 **Discord Messages:** ${discordMessageCount}
+📊 **Call Ratio:** ${ratio}x ${analysis}
+
+**Expected:** ~1.2x (1 call per message + sleeptime overhead)
+**Your Ratio:** ${ratio}x`);
+      return;
+    }
+    
+    // 📅 NEW: !daily command for daily credit tracking (Oct 24, 2025)
+    if (message.content.trim() === '!daily' || message.content.trim() === '!today') {
+      const dailyStats = getDailyStats();
+      await message.reply(dailyStats);
+      return;
+    }
+    
     const adminResponse = await handleAdminCommand(message, client.user.id);
     
     if (adminResponse) {
@@ -323,6 +389,115 @@ client.on('messageCreate', async (message) => {
       console.log(`📩 Ignoring other bot...`);
       return;
     }
+  }
+  
+  // Determine message type
+  const isDM = message.guild === null;
+  let messageType = isDM ? MessageType.DM : MessageType.GENERIC;
+  
+  // 🎥 CHECK FOR CHUNK REQUESTS FIRST (Oct 26, 2025)
+  // If Mioré requests a chunk, handle it directly
+  console.log('🎥 Checking for YouTube chunk/info requests...');
+  const chunkResponse = handleChunkRequest(message.content);
+  if (chunkResponse) {
+    console.log('📖 YouTube chunk/info request detected - processing');
+    console.log(`📖 Request content: ${message.content.substring(0, 100)}...`);
+    console.log('📖 Sending chunk/info response to Letta');
+    // Use customContent parameter instead of cloning message object
+    const msg = await sendMessage(message, messageType, null, chunkResponse);
+    
+    if (msg !== "") {
+      if (msg.length <= 1900) {
+        await message.reply(msg);
+        console.log(`Message sent: ${msg}`);
+      } else {
+        const chunks = chunkText(msg, 1900);
+        await message.reply(chunks[0]);
+        
+        for (let i = 1; i < chunks.length; i++) {
+          await new Promise(r => setTimeout(r, 200));
+          await message.channel.send(chunks[i]);
+        }
+        
+        console.log(`Message sent in ${chunks.length} chunks.`);
+      }
+    }
+    return;
+  }
+  
+  // 🎥 PREPROCESS YOUTUBE LINKS (Oct 26, 2025)
+  // Automatically fetch and attach transcripts to messages
+  console.log('🎥 Checking message for YouTube links...');
+  let statusMessage: any = null;
+  
+  // Check if message contains YouTube links
+  const youtubeRegex = /https?:\/\/(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/g;
+  const hasYouTubeLinks = youtubeRegex.test(message.content);
+  
+  if (hasYouTubeLinks) {
+    console.log('🎥 YouTube link(s) detected in message!');
+    // Send status message to user
+    statusMessage = await message.reply('🎥 Fetching video transcript(s)...');
+    console.log('📺 User notified: Fetching YouTube transcript(s)');
+  } else {
+    console.log('🎥 No YouTube links found - skipping transcript processing');
+  }
+  
+  const result = await preprocessYouTubeLinks(
+    message.content,
+    async () => await message.channel.sendTyping()
+  );
+  
+  // Delete status message and send completion info
+  if (statusMessage) {
+    await statusMessage.delete().catch(() => console.log('⚠️ Could not delete status message'));
+    
+    if (result.videosProcessed > 0) {
+      const statusText = result.videosFailed > 0
+        ? `✅ Processed ${result.videosProcessed} video(s) | ⚠️ ${result.videosFailed} failed (no transcript)`
+        : `✅ Processed ${result.videosProcessed} video transcript(s) - sending to Letta...`;
+      
+      const completionMsg = await message.reply(statusText);
+      console.log(`📺 ${statusText}`);
+      
+      // Delete completion message after 3 seconds
+      setTimeout(async () => {
+        await completionMsg.delete().catch(() => {});
+      }, 3000);
+    }
+  }
+  
+  // If content was modified (transcript added), send with custom content
+  if (result.content !== message.content) {
+    console.log('📺 Transcript(s) attached to message - sending to Letta');
+    // Pass original message object with custom content parameter
+    const msg = await sendMessage(message, messageType, conversationContext, result.content);
+    
+    if (msg !== "") {
+      // 🔒 Record that bot replied (for pingpong tracking)
+      if (ENABLE_AUTONOMOUS && client.user?.id) {
+        const wasFarewell = msg.toLowerCase().includes('gotta go') || 
+                           msg.toLowerCase().includes('catch you later') ||
+                           msg.toLowerCase().includes('step away');
+        recordBotReply(message.channel.id, client.user.id, wasFarewell);
+      }
+      
+      if (msg.length <= 1900) {
+        await message.reply(msg);
+        console.log(`Message sent: ${msg}`);
+      } else {
+        const chunks = chunkText(msg, 1900);
+        await message.reply(chunks[0]);
+        
+        for (let i = 1; i < chunks.length; i++) {
+          await new Promise(r => setTimeout(r, 200));
+          await message.channel.send(chunks[i]);
+        }
+        
+        console.log(`Message sent in ${chunks.length} chunks.`);
+      }
+    }
+    return; // Early exit - we've already handled the message
   }
   
   // Handle DMs
@@ -392,125 +567,6 @@ if (ENABLE_TTS) {
     // setInterval(async () => { await ttsService.cleanupOldFiles(3600000); }, 60 * 60 * 1000);
   }
 }
-
-// ============================================
-// Midjourney Proxy API
-// ============================================
-
-const MIDJOURNEY_CHANNEL_ID = process.env.MIDJOURNEY_CHANNEL_ID;
-const MIDJOURNEY_BOT_ID = '936929561302675456'; // Official Midjourney bot ID
-
-app.post('/api/midjourney/generate', (req, res) => {
-  (async () => {
-  try {
-    const { prompt, cref, sref, ar, v, cw, sw, style, chaos, quality } = req.body;
-    
-    if (!prompt) {
-      return res.status(400).json({ error: 'Missing required parameter: prompt' });
-    }
-    
-    if (!MIDJOURNEY_CHANNEL_ID) {
-      return res.status(500).json({ error: 'MIDJOURNEY_CHANNEL_ID not configured' });
-    }
-    
-    // Get Midjourney channel
-    const channel = await client.channels.fetch(MIDJOURNEY_CHANNEL_ID);
-    if (!channel || !('send' in channel)) {
-      return res.status(500).json({ error: 'Midjourney channel not found or invalid' });
-    }
-    
-    // Build Midjourney command
-    let mjCommand = `/imagine prompt: ${prompt}`;
-    
-    // Add parameters
-    if (ar && ar !== '1:1') mjCommand += ` --ar ${ar}`;
-    if (v) mjCommand += ` --v ${v}`;
-    if (style && style !== 'default') mjCommand += ` --style ${style}`;
-    if (chaos && chaos > 0) mjCommand += ` --chaos ${chaos}`;
-    if (quality && quality !== 1) mjCommand += ` --q ${quality}`;
-    
-    // Add character reference
-    if (cref) {
-      mjCommand += ` --cref ${cref}`;
-      if (cw && cw !== 100) mjCommand += ` --cw ${cw}`;
-    }
-    
-    // Add style reference
-    if (sref) {
-      mjCommand += ` --sref ${sref}`;
-      if (sw && sw !== 100) mjCommand += ` --sw ${sw}`;
-    }
-    
-    console.log(`🎨 [MJ Proxy] Sending command: ${mjCommand.substring(0, 100)}...`);
-    
-    // Send the command
-    const sentMessage = await channel.send(mjCommand);
-    const commandTimestamp = sentMessage.createdTimestamp;
-    
-    console.log(`⏳ [MJ Proxy] Waiting for Midjourney response...`);
-    
-    // Poll for Midjourney response
-    const maxWaitTime = 120000; // 2 minutes
-    const pollInterval = 3000; // 3 seconds
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < maxWaitTime) {
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-      
-      // Fetch recent messages
-      const messages = await channel.messages.fetch({ limit: 10 });
-      
-      // Look for Midjourney's response
-      for (const msg of messages.values()) {
-        // Check if from Midjourney bot
-        if (msg.author.id !== MIDJOURNEY_BOT_ID) continue;
-        
-        // Check if after our command
-        if (msg.createdTimestamp <= commandTimestamp) continue;
-        
-        // Check for attachments (completed image)
-        if (msg.attachments.size > 0) {
-          const attachment = msg.attachments.first();
-          if (attachment) {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            console.log(`✅ [MJ Proxy] Image generated in ${elapsed}s`);
-            
-            return res.json({
-              status: 'completed',
-              image_url: attachment.url,
-              filename: attachment.name,
-              width: attachment.width || 0,
-              height: attachment.height || 0,
-              generation_time: `${elapsed}s`,
-              command: mjCommand,
-              message_id: msg.id
-            });
-          }
-        }
-      }
-      
-      console.log(`⏳ [MJ Proxy] Still waiting... (${Math.floor((Date.now() - startTime) / 1000)}s elapsed)`);
-    }
-    
-    // Timeout
-    return res.status(408).json({
-      status: 'timeout',
-      error: `Generation timed out after ${maxWaitTime / 1000}s`,
-      note: 'Check Discord channel manually - generation might still complete'
-    });
-    
-  } catch (error: any) {
-    console.error('❌ [MJ Proxy] Error:', error);
-    return res.status(500).json({
-      status: 'error',
-      error: error.message || String(error)
-    });
-  }
-  })().catch((e: any) => {
-    console.error('❌ [MJ Proxy] Uncaught error:', e);
-    res.status(500).json({ status: 'error', error: String(e?.message || e) });
-  });
-});
 
 // ============================================
 // Health Check Endpoints

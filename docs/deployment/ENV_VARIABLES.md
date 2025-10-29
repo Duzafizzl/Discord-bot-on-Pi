@@ -67,11 +67,6 @@ ENABLE_TTS=false
 TTS_API_KEYS=your-secret-key-1,your-secret-key-2
 ```
 
-### Midjourney Integration
-```bash
-MIDJOURNEY_CHANNEL_ID=
-```
-
 ### Task Scheduler
 ```bash
 TASKS_CHANNEL_ID=

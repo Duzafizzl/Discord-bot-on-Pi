@@ -112,7 +112,10 @@ pi-backup-*/
 # Compiled JS from TS
 src/**/*.js
 src/**/*.js.map
-!src/archive/*.js
+
+# Archive (historical backups - keep local only)
+src/archive/
+**/archive/
 
 # Test outputs
 coverage/

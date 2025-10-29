@@ -17,8 +17,10 @@
  * - !pm2 logs <name>       → Show recent logs (last 20 lines)
  * - !system status         → Show system info (uptime, memory, CPU)
  * - !bot stats             → Show bot stats (autonomous system stats)
+ * - !sum [num]  → Summarize Letta conversation (default: 20 messages)
  * 
  * Oct 16, 2025 - Mioré Remote Admin System
+ * Oct 27, 2025 - Added conversation summarization command
  */
 
 import { Message } from "discord.js";
@@ -29,7 +31,7 @@ import { getConversationStats } from "./autonomous";
 const execAsync = promisify(exec);
 
 // ===== CONFIGURATION =====
-const ADMIN_USER_ID = process.env.ADMIN_USER_ID || ''; // Clary's Discord User ID
+const ADMIN_USER_ID = process.env.ADMIN_USER_ID || ''; // Admin's Discord User ID
 const COMMAND_COOLDOWN_MS = 2000; // 2 seconds between commands (anti-spam)
 
 // ===== STATE =====
@@ -154,6 +156,95 @@ function getBotStats(channelId: string, botUserId: string): string {
 }
 
 /**
+ * Trigger Letta conversation summarization
+ * Reduces message history to keep memory manageable
+ */
+async function triggerSummarization(maxMessages: number = 20): Promise<string> {
+  const LETTA_API_KEY = process.env.LETTA_API_KEY;
+  const LETTA_AGENT_ID = process.env.LETTA_AGENT_ID;
+  
+  if (!LETTA_API_KEY || !LETTA_AGENT_ID) {
+    throw new Error('Letta credentials not configured (LETTA_API_KEY or LETTA_AGENT_ID missing)');
+  }
+  
+  try {
+    console.log(`🧠 Triggering Letta summarization (keeping ${maxMessages} messages)...`);
+    
+    // Get current message count
+    const checkResponse = await fetch(
+      `https://api.letta.com/v1/agents/${LETTA_AGENT_ID}/messages?limit=100`,
+      {
+        headers: {
+          'Authorization': `Bearer ${LETTA_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!checkResponse.ok) {
+      throw new Error(`Failed to check messages: ${checkResponse.statusText}`);
+    }
+    
+    const messages = await checkResponse.json();
+    const beforeCount = messages.length;
+    
+    // Trigger summarization
+    const summarizeResponse = await fetch(
+      `https://api.letta.com/v1/agents/${LETTA_AGENT_ID}/summarize`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${LETTA_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          max_message_length: maxMessages
+        })
+      }
+    );
+    
+    if (summarizeResponse.status !== 204 && !summarizeResponse.ok) {
+      throw new Error(`Summarization failed: ${summarizeResponse.statusText}`);
+    }
+    
+    // Wait for API to process (5 seconds to be safe)
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // Verify new count
+    const verifyResponse = await fetch(
+      `https://api.letta.com/v1/agents/${LETTA_AGENT_ID}/messages?limit=100`,
+      {
+        headers: {
+          'Authorization': `Bearer ${LETTA_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    if (!verifyResponse.ok) {
+      throw new Error(`Failed to verify: ${verifyResponse.statusText}`);
+    }
+    
+    const afterMessages = await verifyResponse.json();
+    const afterCount = afterMessages.length;
+    
+    const result = [
+      '🧠 **Conversation Summarized**',
+      '',
+      `📊 Before: ${beforeCount} messages`,
+      `📊 After: ${afterCount} messages`,
+      `🎯 Target: ${maxMessages} messages`,
+      `✅ Status: ${afterCount <= maxMessages + 10 ? 'Success!' : 'Partial (may need time to fully process)'}`
+    ];
+    
+    return result.join('\n');
+    
+  } catch (error: any) {
+    throw new Error(`Summarization failed: ${error.message}`);
+  }
+}
+
+/**
  * Format output for Discord (respects 2000 char limit)
  */
 function formatOutput(output: string): string {
@@ -233,6 +324,16 @@ export async function handleAdminCommand(message: Message, botUserId: string): P
         }
         break;
       
+      case 'sum':
+      case 'zusammenfassen': // Backward compatibility
+        const maxMessages = args[0] ? parseInt(args[0]) : 20;
+        if (isNaN(maxMessages) || maxMessages < 5 || maxMessages > 100) {
+          response = '❌ **Invalid argument**: Please provide a number between 5 and 100.\nExample: `!sum 20`';
+        } else {
+          response = await triggerSummarization(maxMessages);
+        }
+        break;
+      
       case 'help':
         response = '🛠️ **Admin Commands**\n\n' +
                   '**PM2 Control**\n' +
@@ -243,6 +344,8 @@ export async function handleAdminCommand(message: Message, botUserId: string): P
                   '**System**\n' +
                   '• `!system status` - System info\n' +
                   '• `!bot stats` - Bot statistics\n\n' +
+                  '**Letta**\n' +
+                  '• `!sum [20]` - Summarize conversation\n\n' +
                   '**Other**\n' +
                   '• `!help` - Show this message';
         break;

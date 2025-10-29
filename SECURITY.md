@@ -184,9 +184,6 @@ SPOTIFY_REFRESH_TOKEN=
 # Task Scheduler
 TASKS_CHANNEL_ID=
 
-# Midjourney Integration
-MIDJOURNEY_CHANNEL_ID=
-
 # Server Config
 PORT=3001
 ```

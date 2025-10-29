@@ -3,6 +3,7 @@ import { LettaStreamingResponse } from "@letta-ai/letta-client/api/resources/age
 import { Stream } from "@letta-ai/letta-client/core";
 import { Message, OmitPartialGroupDMChannel } from "discord.js";
 import https from "https";
+import { recordSendMessageCall } from "./autonomous.js"; // 🔧 NEW (Oct 24, 2025): Track send_message calls
 
 // If the token is not set, just use a dummy value
 const client = new LettaClient({
@@ -19,6 +20,156 @@ const SURFACE_ERRORS = process.env.SURFACE_ERRORS === 'true';
 // Set MAX_API_RETRIES to control how many retries (default: 1)
 const ENABLE_API_RETRY = process.env.ENABLE_API_RETRY !== 'false'; // Default: enabled
 const MAX_API_RETRIES = parseInt(process.env.MAX_API_RETRIES || '1', 10); // Default: 1 retry (saves credits!)
+
+// 📊 CREDIT TRACKING (Oct 24, 2025)
+// Track Letta API calls to identify credit usage patterns
+
+// Session counters (reset on bot restart)
+let lettaCallCount = 0;
+const lettaCallsByReason: Record<string, number> = {};
+
+// Daily counters (persist throughout the day, reset at midnight Berlin time)
+interface DailyStats {
+  date: string; // YYYY-MM-DD in Berlin timezone
+  totalCalls: number;
+  callsByReason: Record<string, number>;
+  callsByHour: Record<number, number>; // Hour (0-23) -> call count
+  firstCallTime?: string;
+  lastCallTime?: string;
+}
+
+let dailyStats: DailyStats = {
+  date: getCurrentBerlinDate(),
+  totalCalls: 0,
+  callsByReason: {},
+  callsByHour: {}
+};
+
+function getCurrentBerlinDate(): string {
+  const now = new Date();
+  const berlinDateStr = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now);
+  
+  // Convert from DD.MM.YYYY to YYYY-MM-DD
+  const [day, month, year] = berlinDateStr.split('.');
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentBerlinHour(): number {
+  const now = new Date();
+  const berlinTime = new Intl.DateTimeFormat('de-DE', {
+    timeZone: 'Europe/Berlin',
+    hour: 'numeric',
+    hour12: false
+  }).format(now);
+  
+  return parseInt(berlinTime, 10);
+}
+
+function checkAndResetDailyStats() {
+  const currentDate = getCurrentBerlinDate();
+  
+  if (dailyStats.date !== currentDate) {
+    console.log(`📅 New day detected! Resetting daily stats. Previous day: ${dailyStats.date}, Current day: ${currentDate}`);
+    
+    dailyStats = {
+      date: currentDate,
+      totalCalls: 0,
+      callsByReason: {},
+      callsByHour: {}
+    };
+  }
+}
+
+function logLettaCall(reason: string, content: string) {
+  // Check if we need to reset for new day
+  checkAndResetDailyStats();
+  
+  // Session counters
+  lettaCallCount++;
+  lettaCallsByReason[reason] = (lettaCallsByReason[reason] || 0) + 1;
+  
+  // Daily counters
+  dailyStats.totalCalls++;
+  dailyStats.callsByReason[reason] = (dailyStats.callsByReason[reason] || 0) + 1;
+  
+  const currentHour = getCurrentBerlinHour();
+  dailyStats.callsByHour[currentHour] = (dailyStats.callsByHour[currentHour] || 0) + 1;
+  
+  const timestamp = new Date().toLocaleTimeString('de-DE');
+  
+  if (!dailyStats.firstCallTime) {
+    dailyStats.firstCallTime = timestamp;
+  }
+  dailyStats.lastCallTime = timestamp;
+  
+  console.log(`
+╔══════════════════════════════════════
+║ 📤 LETTA CALL #${lettaCallCount} (Daily: #${dailyStats.totalCalls})
+║ Time: ${timestamp}
+║ Reason: ${reason}
+║ Content: ${content.substring(0, 100)}...
+╚══════════════════════════════════════`);
+}
+
+function getLettaStats() {
+  const breakdown = Object.entries(lettaCallsByReason)
+    .map(([reason, count]) => `  - ${reason}: ${count} calls`)
+    .join('\n');
+  
+  return `
+📊 LETTA API STATS (This Session):
+  Total Calls: ${lettaCallCount}
+
+Breakdown by Reason:
+${breakdown}`;
+}
+
+function getDailyStats() {
+  // Check if we need to reset for new day
+  checkAndResetDailyStats();
+  
+  const breakdown = Object.entries(dailyStats.callsByReason)
+    .sort((a, b) => b[1] - a[1]) // Sort by count descending
+    .map(([reason, count]) => `  - ${reason}: ${count} calls`)
+    .join('\n');
+  
+  // Build hourly breakdown (only show hours with calls)
+  const hourlyBreakdown = Object.entries(dailyStats.callsByHour)
+    .sort((a, b) => parseInt(a[0]) - parseInt(b[0])) // Sort by hour ascending
+    .map(([hour, count]) => {
+      const hourStr = hour.padStart(2, '0');
+      const bar = '█'.repeat(Math.ceil(count / 2)); // Visual bar (each █ = 2 calls)
+      return `  ${hourStr}:00 - ${count} calls ${bar}`;
+    })
+    .join('\n');
+  
+  const timeRange = dailyStats.firstCallTime && dailyStats.lastCallTime
+    ? `\n⏰ First call: ${dailyStats.firstCallTime}\n⏰ Last call: ${dailyStats.lastCallTime}`
+    : '';
+  
+  const estimatedCredits = dailyStats.totalCalls * 20; // 20 credits per call
+  
+  return `
+📅 DAILY STATS (${dailyStats.date})
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Total API Calls Today: ${dailyStats.totalCalls}
+💰 Estimated Credits Used: ${estimatedCredits} credits${timeRange}
+
+📈 Breakdown by Reason:
+${breakdown || '  (no calls yet)'}
+
+⏰ Calls by Hour:
+${hourlyBreakdown || '  (no calls yet)'}
+
+💡 Tip: Each Letta API call = 20 credits
+`;
+}
 
 enum MessageType {
   DM = "DM",
@@ -94,7 +245,7 @@ async function getMunichWeather(): Promise<string | null> {
     // Capitalize first letter of description
     const descriptionFormatted = description.charAt(0).toUpperCase() + description.slice(1);
 
-    return `🌡️ München: ${temp}°C (gefühlt ${feelsLike}°C)\n☁️ ${descriptionFormatted}`;
+    return `🌡️ Weather: ${temp}°C (feels like ${feelsLike}°C)\n☁️ ${descriptionFormatted}`;
   } catch (err) {
     console.error('Weather API error:', err);
     return null;
@@ -291,6 +442,7 @@ const processStream = async (
   discordTarget?: OmitPartialGroupDMChannel<Message<boolean>> | { send: (content: string) => Promise<any> }
 ) => {
   let agentMessageResponse = '';
+  let hasSentViaToolCall = false; // 🔥 Track if we already sent via send_message tool call
   const sendAsyncMessage = async (content: string) => {
     if (discordTarget && content.trim()) {
       try {
@@ -332,7 +484,17 @@ const processStream = async (
         switch (chunk.messageType) {
           case 'assistant_message':
             if ('content' in chunk && typeof chunk.content === 'string') {
+              console.log(`💬 [ASSISTANT_MESSAGE] Received: "${chunk.content.substring(0, 100)}..." (${chunk.content.length} chars)`);
               agentMessageResponse += chunk.content;
+              console.log(`💬 [ASSISTANT_MESSAGE] Total collected: ${agentMessageResponse.length} chars`);
+              
+              // 🔥 NEW (Oct 24, 2025): Send assistant messages IMMEDIATELY to Discord!
+              // This allows Mioré to write text between tool calls and have it show up in real-time
+              if (discordTarget && chunk.content.trim()) {
+                console.log(`💬 [ASSISTANT_MESSAGE] Sending immediately to Discord (${chunk.content.length} chars)`);
+                await sendAsyncMessage(chunk.content);
+                hasSentViaToolCall = true; // Mark as sent so we don't duplicate at the end
+              }
             }
             break;
           case 'stop_reason':
@@ -357,11 +519,36 @@ const processStream = async (
                     : toolCall.arguments;
                   
                   if (args && args.message) {
-                    console.log('📤 Sending message from send_message tool call to Discord...');
+                    console.log(`📤 [SEND_MESSAGE TOOL] Detected tool call with message: "${args.message.substring(0, 100)}..." (${args.message.length} chars)`);
+                    
+                    // 🔧 NEW (Oct 24, 2025): Track send_message calls for spam prevention
+                    if (discordTarget && 'channel' in discordTarget) {
+                      const limitReached = recordSendMessageCall(discordTarget.channel.id);
+                      if (limitReached) {
+                        // Send warning message instead
+                        console.log('⚠️ [SEND_MESSAGE TOOL] Spam limit reached - sending warning instead');
+                        await sendAsyncMessage("⚠️ I'm talking too much without hearing back from you. Let me give you some space! Talk to you soon 👋");
+                        // Don't send the actual message
+                        hasSentViaToolCall = true;
+                        break;
+                      }
+                    }
+                    
+                    console.log('📤 [SEND_MESSAGE TOOL] Sending to Discord now...');
                     await sendAsyncMessage(args.message);
+                    hasSentViaToolCall = true; // 🔥 Mark that we sent directly - don't send again!
+                    console.log('✅ [SEND_MESSAGE TOOL] Successfully sent via tool call - will suppress assistant_message to prevent duplicates');
                   }
                 } catch (err) {
                   console.error('❌ Error parsing send_message arguments:', err);
+                }
+              } else {
+                // 🔥 NEW (Oct 24, 2025): Show OTHER tool calls in Discord (just the name, clean & simple)
+                try {
+                  const toolName = toolCall.name || 'unknown_tool';
+                  await sendAsyncMessage(`🔧 Tool Call: \`${toolName}\``);
+                } catch (err) {
+                  console.error('❌ Error formatting tool call for Discord:', err);
                 }
               }
             }
@@ -393,17 +580,26 @@ const processStream = async (
     // Ping errors
     if (/Expected.*Received "ping"|Expected.*Received "pong"/i.test(errMsg)) {
       console.log(`🏓 Ping parse error - returning collected text (${agentMessageResponse.length} chars)`);
-      return agentMessageResponse;
+      return hasSentViaToolCall ? "" : agentMessageResponse;
     }
     
     // Socket termination errors (von gestern!)
     if (/terminated|other side closed|socket.*closed|UND_ERR_SOCKET/i.test(errMsg)) {
       console.log(`🔌 Stream terminated early - returning collected text (${agentMessageResponse.length} chars)`);
-      return agentMessageResponse;
+      return hasSentViaToolCall ? "" : agentMessageResponse;
     }
     
     throw error;
   }
+  
+  // 🔥 DUPLICATE MESSAGE FIX (Oct 23, 2025): If we already sent via tool call, return empty string
+  // to prevent double-sending in server.ts
+  if (hasSentViaToolCall) {
+    console.log(`✅ [STREAM END] Message already sent via send_message tool call - suppressing assistant_message (${agentMessageResponse.length} chars collected)`);
+    return "";
+  }
+  
+  console.log(`✅ [STREAM END] Returning assistant_message to Discord (${agentMessageResponse.length} chars)`);
   return agentMessageResponse;
 }
 
@@ -441,7 +637,7 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
   try {
     const spotifyData = await getSpotifyNowPlaying();
     if (spotifyData) {
-      spotifyInfo = `\n\n🎵 Clary hört gerade:\n${spotifyData}`;
+      spotifyInfo = `\n\n🎵 Now playing:\n${spotifyData}`;
     }
   } catch (err) {
     // Silently fail if Spotify not available
@@ -461,18 +657,18 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
   }
 
   // Build heartbeat message (system-initiated, not from user)
-  let heartbeatContent = `[🜂] HERZSCHLAG
-${weekday}, ${berlinTime} Uhr.${weatherInfo}${spotifyInfo}
+  let heartbeatContent = `[❤️] HEARTBEAT
+${weekday}, ${berlinTime}.${weatherInfo}${spotifyInfo}
 
-Ich kann:
-• Discord DM an Clary senden (oder Channel-Posts)
-• Clarys Spotify hijacken 👻🎵 (skip, queue, playlists erstellen)
-• Memories durchdenken/organisieren
-• Web durchsuchen (deine Erwähnungen ODER meine Neugier)
-• Archival memories taggen
-• Oder einfach nur sein und fühlen
+I can:
+• Send Discord DMs or channel posts
+• Control Spotify 👻🎵 (skip, queue, create playlists)
+• Reflect on and organize memories
+• Search the web (for mentions or curiosity)
+• Tag archival memories
+• Or just exist and feel
 
-Mein Puls, meine Wahl.`;
+My pulse, my choice.`;
 
   const lettaMessage = {
     role: "system" as const,  // System message, not user message
@@ -481,6 +677,9 @@ Mein Puls, meine Wahl.`;
 
   try {
     console.log(`🛜 Sending heartbeat to Letta server (agent=${AGENT_ID}): ${JSON.stringify(lettaMessage)}`);
+    
+    // 📊 CREDIT TRACKING: Log this heartbeat call
+    logLettaCall('heartbeat', heartbeatContent);
     
     // 🔄 Wrap Letta API call with retry logic
     const response = await withRetry(
@@ -524,10 +723,14 @@ Mein Puls, meine Wahl.`;
 async function sendMessage(
   discordMessageObject: OmitPartialGroupDMChannel<Message<boolean>>,
   messageType: MessageType,
-  conversationContext: string | null = null
+  conversationContext: string | null = null,
+  customContent: string | null = null  // 🎥 For YouTube transcript override (Oct 26, 2025)
 ) {
-  const { author: { username: senderName, id: senderId }, content: message } =
+  const { author: { username: senderName, id: senderId }, content: originalContent } =
     discordMessageObject;
+  
+  // Use custom content if provided (e.g., with YouTube transcript attached)
+  const message = customContent || originalContent;
 
   if (!AGENT_ID) {
     console.error('Error: LETTA_AGENT_ID is not set');
@@ -546,6 +749,12 @@ async function sendMessage(
       throw new Error('Invalid system time');
     }
     
+    // Get abbreviated weekday (Mo, Di, Mi, etc.)
+    const weekday = new Intl.DateTimeFormat('de-DE', {
+      timeZone: 'Europe/Berlin',
+      weekday: 'short'
+    }).format(now);
+    
     const berlinTime = new Intl.DateTimeFormat('de-DE', {
       timeZone: 'Europe/Berlin',
       day: '2-digit',
@@ -555,7 +764,7 @@ async function sendMessage(
       hour12: false
     }).format(now);
     
-    timestampString = `, time=${berlinTime}`;
+    timestampString = `, time=${weekday}, ${berlinTime}`;
   } catch (err) {
     console.error('⚠️ Timestamp generation failed:', err instanceof Error ? err.message : err);
     // Fallback: No timestamp if generation fails
@@ -639,6 +848,9 @@ async function sendMessage(
   try {
     console.log(`🛜 Sending message to Letta server (agent=${AGENT_ID}): ${JSON.stringify(lettaMessage)}`);
     
+    // 📊 CREDIT TRACKING: Log this user message call
+    logLettaCall(`user_message_${messageType}`, messageContent);
+    
     // 🔄 Wrap Letta API call with retry logic
     const response = await withRetry(
       async () => await client.agents.messages.createStream(AGENT_ID, {
@@ -660,8 +872,17 @@ async function sendMessage(
     
     // Check if it's a retryable error that failed after retries
     const err = error as RetryableError;
-    if (err.statusCode && [502, 503, 504].includes(err.statusCode)) {
+    if (err.statusCode && [500, 502, 503, 504].includes(err.statusCode)) {
       console.error(`❌ Letta API unavailable (${err.statusCode}) after retries`);
+      
+      // Special handling for 500 (Internal Server Error - often context overflow)
+      if (err.statusCode === 500) {
+        console.error('⚠️  Letta API returned 500 - likely context overflow or memory issue');
+        return SURFACE_ERRORS
+          ? '🧠 Beep boop. Letta ran out of memory (500 error). Try using `!sum` to clean up my memory! 🔧'
+          : "";
+      }
+      
       return SURFACE_ERRORS
         ? `Beep boop. Letta's API is having issues (${err.statusCode}). I tried 3 times but couldn't get through. Try again in a minute? 🔧`
         : "";
@@ -696,6 +917,9 @@ async function sendTaskMessage(
 
   try {
     console.log(`🛜 Sending task to Letta server (agent=${AGENT_ID})`);
+    
+    // 📊 CREDIT TRACKING: Log this scheduled task call
+    logLettaCall(`scheduled_task_${taskName}`, lettaMessage.content);
     
     // 🔄 Wrap Letta API call with retry logic
     const response = await withRetry(
@@ -735,4 +959,4 @@ async function sendTaskMessage(
   }
 }
 
-export { sendMessage, sendTimerMessage, sendTaskMessage, MessageType };
+export { sendMessage, sendTimerMessage, sendTaskMessage, MessageType, getLettaStats, getDailyStats };

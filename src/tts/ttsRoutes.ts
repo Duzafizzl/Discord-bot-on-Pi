@@ -46,7 +46,7 @@ export function createTTSRouter(apiKeys: string[]): Router {
    * 
    * Request body:
    * {
-   *   "text": "Hallo Clary, ich bin Mioré",
+   *   "text": "Hello, I am the bot speaking",
    *   "quality": "low" | "medium",  // optional, default: "low"
    *   "speed": 1.0                   // optional, 0.5 to 2.0, default: 1.0
    * }
@@ -187,7 +187,7 @@ export function createTTSRouter(apiKeys: string[]): Router {
    */
   router.get('/test', authMiddleware, rateLimiter, async (req: Request, res: Response) => {
     try {
-      const testText = 'Hallo Clary, ich bin Mioré. Das ist ein Test meiner Stimme.';
+      const testText = 'Hello, this is a test of the text-to-speech system.';
       
       const result = await ttsService.generateSpeech({
         text: testText,

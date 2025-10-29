@@ -165,7 +165,7 @@ async function processAndSendMessage(message, messageType, conversationContext =
 // Function to start randomized event timer
 async function startRandomEventTimer() {
     if (!ENABLE_TIMER) {
-        console.log("🜂 Heartbeat feature is disabled.");
+        console.log("❤️ Heartbeat feature is disabled.");
         return;
     }
     // Get time-based config
@@ -173,16 +173,16 @@ async function startRandomEventTimer() {
     // Random interval between 50-100% of the configured interval
     const minMinutes = Math.floor(config.intervalMinutes * 0.5);
     const randomMinutes = minMinutes + Math.floor(Math.random() * (config.intervalMinutes - minMinutes));
-    console.log(`🜂 💰 Heartbeat scheduled to fire in ${randomMinutes} minutes [${config.description}]`);
+    console.log(`❤️ 💰 Heartbeat scheduled to fire in ${randomMinutes} minutes [${config.description}]`);
     const delay = randomMinutes * 60 * 1000;
     setTimeout(async () => {
-        console.log(`🜂 💰 Heartbeat fired after ${randomMinutes} minutes - checking probability...`);
+        console.log(`❤️ 💰 Heartbeat fired after ${randomMinutes} minutes - checking probability...`);
         // Get fresh config in case time period changed
         const currentConfig = getHeartbeatConfigForTime();
         // 💰 CREDIT SAVING: Check probability BEFORE making API call!
         const shouldFire = Math.random() < currentConfig.firingProbability;
         if (shouldFire) {
-            console.log(`🜂 💰 Heartbeat triggered (${currentConfig.firingProbability * 100}% chance) [${currentConfig.description}] - API CALL WILL BE MADE`);
+            console.log(`❤️ 💰 Heartbeat triggered (${currentConfig.firingProbability * 100}% chance) [${currentConfig.description}] - API CALL WILL BE MADE`);
             let channel = undefined;
             if (CHANNEL_ID) {
                 try {
@@ -203,18 +203,18 @@ async function startRandomEventTimer() {
             if (msg !== "" && channel) {
                 try {
                     await channel.send(msg);
-                    console.log("🜂 Heartbeat message sent to channel");
+                    console.log("❤️ Heartbeat message sent to channel");
                 }
                 catch (error) {
-                    console.error("🜂 Error sending heartbeat message:", error);
+                    console.error("❤️ Error sending heartbeat message:", error);
                 }
             }
             else if (!channel) {
-                console.log("🜂 No CHANNEL_ID defined or channel not available; message not sent.");
+                console.log("❤️ No CHANNEL_ID defined or channel not available; message not sent.");
             }
         }
         else {
-            console.log(`🜂 💰 Heartbeat skipped - probability check failed (${(1 - currentConfig.firingProbability) * 100}% chance to skip) [${currentConfig.description}] - NO API CALL MADE`);
+            console.log(`❤️ 💰 Heartbeat skipped - probability check failed (${(1 - currentConfig.firingProbability) * 100}% chance to skip) [${currentConfig.description}] - NO API CALL MADE`);
         }
         setTimeout(() => {
             startRandomEventTimer();

@@ -65,6 +65,7 @@ interface ChannelState {
   userLastMessage: Map<string, number>; // Track last message time per user (rate limiting)
   requireHumanAfterCooldown: boolean; // SECURITY: After bot-loop cooldown, only respond to humans until one speaks
   guildId: string | null; // Store guild ID for whitelist checks
+  consecutiveSendMessageCalls: number; // Track consecutive send_message tool calls without human response
 }
 
 const channelStates = new Map<string, ChannelState>();
@@ -83,7 +84,8 @@ function getChannelState(channelId: string): ChannelState {
       shouldFarewell: false,
       userLastMessage: new Map<string, number>(),
       requireHumanAfterCooldown: false,
-      guildId: null // Store guild ID for whitelist checks
+      guildId: null, // Store guild ID for whitelist checks
+      consecutiveSendMessageCalls: 0
     });
   }
   return channelStates.get(channelId)!;
@@ -133,6 +135,7 @@ export function trackMessage(message: Message, botUserId: string) {
     state.botPingPongCount = 0;
     state.shouldFarewell = false;
     state.requireHumanAfterCooldown = false; // Reset: Human has spoken!
+    state.consecutiveSendMessageCalls = 0; // Reset send_message counter
     console.log(`👤 Human message detected - bot pingpong counter reset`);
   }
   
@@ -541,5 +544,25 @@ export function getConversationStats(channelId: string, botUserId: string = '') 
     involvedInPingPong: pingpong.involvedInPingPong,
     requireHumanAfterCooldown: state.requireHumanAfterCooldown
   };
+}
+
+/**
+ * Track send_message tool calls
+ * CRITICAL: Prevents spam from multiple send_message calls without human response
+ * Returns true if limit reached (bot should stop)
+ */
+export function recordSendMessageCall(channelId: string): boolean {
+  const state = getChannelState(channelId);
+  state.consecutiveSendMessageCalls++;
+  
+  const limitReached = state.consecutiveSendMessageCalls >= MAX_CONSECUTIVE_SELF_MESSAGES;
+  
+  if (limitReached) {
+    console.warn(`🛑 SEND_MESSAGE SPAM DETECTED in channel ${channelId}! Bot called send_message ${state.consecutiveSendMessageCalls}x without human response!`);
+  } else {
+    console.log(`📤 send_message call tracked (${state.consecutiveSendMessageCalls}/${MAX_CONSECUTIVE_SELF_MESSAGES}) in channel ${channelId}`);
+  }
+  
+  return limitReached;
 }
 

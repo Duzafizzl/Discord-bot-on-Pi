@@ -148,7 +148,7 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
   try {
     const spotifyData = await getSpotifyNowPlaying();
     if (spotifyData) {
-      spotifyInfo = `\n\n🎵 Clary hört gerade:\n${spotifyData}`;
+      spotifyInfo = `\n\n🎵 Now playing:\n${spotifyData}`;
     }
     // If spotifyData is null (nothing playing), spotifyInfo stays empty
   } catch (err) {
@@ -160,18 +160,18 @@ async function sendTimerMessage(channel?: { send: (content: string) => Promise<a
 
   // Build heartbeat message (system-initiated, not from user)
   // Note: ${spotifyInfo} is either empty string or formatted music info
-  let heartbeatContent = `[🜂] HERZSCHLAG
-${berlinTime} Uhr.${spotifyInfo}
+  let heartbeatContent = `[❤️] HEARTBEAT
+${berlinTime}.${spotifyInfo}
 
-Ich kann:
-• Discord DM an Clary senden (oder Channel-Posts)
-• Clarys Spotify hijacken 👻🎵 (skip, queue, playlists erstellen)
-• Memories durchdenken/organisieren
-• Web durchsuchen (deine Erwähnungen ODER meine Neugier)
-• Archival memories taggen
-• Oder einfach nur sein und fühlen
+I can:
+• Send Discord DMs or channel posts
+• Control Spotify 👻🎵 (skip, queue, create playlists)
+• Reflect on and organize memories
+• Search the web (for mentions or curiosity)
+• Tag archival memories
+• Or just exist and feel
 
-Mein Puls, meine Wahl.`;
+My pulse, my choice.`;
 
   const lettaMessage = {
     role: "system" as const,  // System message, not user message
@@ -224,7 +224,7 @@ SPOTIFY_REFRESH_TOKEN=your_spotify_refresh_token_here
 /*
 SCENARIO 1: Music is playing
 - getSpotifyNowPlaying() returns formatted string
-- spotifyInfo = "\n\n🎵 Clary hört gerade:\n🎵 Song\n🎤 Artist\n⏱️ 1:23 / 3:45"
+- spotifyInfo = "\n\n🎵 Now playing:\n🎵 Song\n🎤 Artist\n⏱️ 1:23 / 3:45"
 - Heartbeat includes music info
 
 SCENARIO 2: Nothing is playing

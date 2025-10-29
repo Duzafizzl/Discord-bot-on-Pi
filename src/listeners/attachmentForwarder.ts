@@ -282,7 +282,28 @@ export function registerAttachmentForwarder(client: Client) {
       }, 8000);
 
       const userText = (msg.content || '').trim();
-      const reply = await forwardImagesToLetta(urls, userId, userText, processingReply);
+      const userName = msg.author.username || 'Unknown';
+      const channelInfo = msg.guild 
+        ? `#${(msg.channel as any).name || 'unknown-channel'} (channel_id=${msg.channel.id})`
+        : 'DM';
+      
+      // Generate timestamp with weekday
+      const now = new Date();
+      const weekday = new Intl.DateTimeFormat('de-DE', {
+        timeZone: 'Europe/Berlin',
+        weekday: 'short'
+      }).format(now);
+      const timeOnly = new Intl.DateTimeFormat('de-DE', {
+        timeZone: 'Europe/Berlin',
+        day: '2-digit',
+        month: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(now);
+      const timestamp = `${weekday}, ${timeOnly}`;
+      
+      const reply = await forwardImagesToLetta(urls, userId, userName, channelInfo, timestamp, userText, processingReply);
       
       if (reply && reply.trim()) {
         // CHUNKING: Split long responses to avoid Discord's 2000 char limit
@@ -462,6 +483,9 @@ async function compressImage(buffer: Buffer, mediaType: string, index: number, t
 async function forwardImagesToLetta(
   urls: string[],
   userId: string,
+  userName: string,
+  channelInfo: string,
+  timestamp: string,
   userText?: string,
   statusMessage: any = null
 ): Promise<string> {
@@ -586,15 +610,20 @@ async function forwardImagesToLetta(
       }
 
       console.log(`🔍 [DEBUG] Building payload for ${base64Images.length} image(s)...`);
+      
+      // Build context message with user and channel info
+      const contextPrefix = `[${userName} (id=${userId}, time=${timestamp}) sent ${base64Images.length} image(s) in ${channelInfo}]`;
+      const textContent = userText && userText.trim()
+        ? `${contextPrefix} ${userText}`
+        : `${contextPrefix} Describe the image(s).`;
+      
       const payloadB64: any = {
         messages: [
           {
             role: 'user',
             content: [
               ...base64Images,
-              ...(userText && userText.trim() 
-                ? [{ type: 'text', text: userText }] 
-                : [{ type: 'text', text: `Describe the image sent by user ${userId}.` }])
+              { type: 'text', text: textContent }
             ]
           }
         ]

@@ -15,7 +15,6 @@ A production-ready Discord bot powered by [Letta AI](https://www.letta.com/) (fo
 - **Spotify**: Real-time "now playing" status in heartbeat messages
 - **Weather**: Live weather data from OpenWeatherMap
 - **Text-to-Speech**: Optional TTS system for voice responses
-- **Midjourney**: Integration for AI image generation
 
 ### 🛡️ Safety & Reliability
 - **Bot-Loop Prevention**: Max 1 bot-to-bot exchange, then 60s cooldown
