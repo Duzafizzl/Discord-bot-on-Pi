@@ -1,4 +1,4 @@
-# Environment Variables - Mioré Discord Bot
+# Environment Variables - Letta Discord Bot
 
 **Updated:** October 13, 2025  
 **Status:** ✅ Current - Matches actual code usage

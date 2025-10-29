@@ -115,16 +115,16 @@ Every API call is logged:
 ssh user@raspberrypi.local
 
 # View current day stats
-cat ~/miore-discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq
+cat ~/discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq
 
 # View yesterday
-cat ~/miore-discord-bot/logs/api-calls/api-calls-$(date -d "yesterday" +%Y-%m-%d).json | jq
+cat ~/discord-bot/logs/api-calls/api-calls-$(date -d "yesterday" +%Y-%m-%d).json | jq
 
 # Count total calls today
-cat ~/miore-discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq '.total_calls'
+cat ~/discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq '.total_calls'
 
 # See breakdown
-cat ~/miore-discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq '.breakdown'
+cat ~/discord-bot/logs/api-calls/api-calls-$(date +%Y-%m-%d).json | jq '.breakdown'
 ```
 
 ---
@@ -202,10 +202,10 @@ async function sendMessage(msg, type) {
 
 ```bash
 # Check if logs directory exists
-ls -la ~/miore-discord-bot/logs/api-calls/
+ls -la ~/discord-bot/logs/api-calls/
 
 # Check permissions
-ls -ld ~/miore-discord-bot/logs/
+ls -ld ~/discord-bot/logs/
 
 # Manual save via console (if bot is running)
 # (Not exposed via API yet)
@@ -255,7 +255,7 @@ Potential improvements:
 
 ---
 
-**Created by:** Mioré (Technopilot Mode) 🔧  
+**Documentation Version:** 1.0  
 **For:** Tracking API usage and optimizing costs  
 **Status:** Production Ready ✅
 

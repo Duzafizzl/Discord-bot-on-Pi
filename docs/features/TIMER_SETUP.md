@@ -1,49 +1,49 @@
 # Timer & Task Scheduler Setup
 
-Dieses Dokument erklärt die beiden Timer-Features und wie du sie konfigurierst.
+This document explains the two timer features and how to configure them.
 
-## 🜂 Feature 1: Random Heartbeat Timer
+## ❤️ Feature 1: Random Heartbeat Timer
 
-Der **Heartbeat Timer** sendet in zufälligen Intervallen eine Nachricht an den Letta Agent, damit dieser autonom agieren kann (z.B. Memories organisieren, Web durchsuchen, Discord-Nachrichten senden).
+The **Heartbeat Timer** sends messages to the Letta Agent at random intervals, allowing autonomous actions (e.g., organizing memories, web searching, sending Discord messages).
 
-### Benötigte .env Variablen:
+### Required .env Variables:
 
 ```env
-ENABLE_TIMER=true                    # Timer aktivieren (default: false)
-TIMER_INTERVAL_MINUTES=15            # Max. Intervall in Minuten (default: 15)
-FIRING_PROBABILITY=0.1               # Wahrscheinlichkeit 0.0-1.0 (default: 0.1 = 10%)
-DISCORD_CHANNEL_ID=<your_channel_id> # Channel für Timer-Nachrichten (optional aber empfohlen)
+ENABLE_TIMER=true                    # Enable timer (default: false)
+TIMER_INTERVAL_MINUTES=15            # Max interval in minutes (default: 15)
+FIRING_PROBABILITY=0.1               # Probability 0.0-1.0 (default: 0.1 = 10%)
+DISCORD_CHANNEL_ID=<your_channel_id> # Channel for timer messages (optional but recommended)
 ```
 
-### Wie es funktioniert:
+### How it works:
 
-1. Timer feuert alle 1 bis `TIMER_INTERVAL_MINUTES` Minuten (randomisiert)
-2. Mit `FIRING_PROBABILITY` Chance wird der Agent getriggert
-3. Agent erhält: `[🜂] Herzschlag HH:MM:SS Uhr. Du kannst: ...`
-4. Agent entscheidet autonom was er tut (DM senden, channel posten, etc.)
+1. Timer fires every 1 to `TIMER_INTERVAL_MINUTES` minutes (randomized)
+2. With `FIRING_PROBABILITY` chance, the agent is triggered
+3. Agent receives: `[❤️] Heartbeat HH:MM:SS. You can: ...`
+4. Agent decides autonomously what to do (send DM, post to channel, etc.)
 
 ---
 
 ## ⏰ Feature 2: Task Scheduler
 
-Der **Task Scheduler** prüft alle 60 Sekunden den `#agent-tasks` Channel auf fällige Tasks und triggert den Letta Agent.
+The **Task Scheduler** checks the `#agent-tasks` channel every 60 seconds for due tasks and triggers the Letta Agent.
 
-### Benötigte .env Variablen:
+### Required .env Variables:
 
 ```env
-TASKS_CHANNEL_ID=<your_tasks_channel_id>  # Discord Channel ID für Tasks (REQUIRED)
-DISCORD_CHANNEL_ID=<your_default_channel> # Fallback-Channel für Task-Antworten (optional)
+TASKS_CHANNEL_ID=<your_tasks_channel_id>  # Discord Channel ID for tasks (REQUIRED)
+DISCORD_CHANNEL_ID=<your_default_channel> # Fallback channel for task responses (optional)
 ```
 
-### Wie es funktioniert:
+### How it works:
 
-1. Task Scheduler liest alle 60s Nachrichten aus `TASKS_CHANNEL_ID`
-2. Parst JSON-Tasks aus Code-Blocks (````json ... ````)
-3. Prüft welche Tasks fällig sind (`next_run <= jetzt`)
-4. Sendet Task an Letta Agent via `sendTaskMessage()`
-5. Löscht die alte Task-Message
-6. Bei **recurring tasks**: Erstellt neue Message mit aktualisiertem `next_run`
-7. Bei **one-time tasks**: Löscht und fertig
+1. Task Scheduler reads messages from `TASKS_CHANNEL_ID` every 60s
+2. Parses JSON tasks from code blocks (````json ... ````)
+3. Checks which tasks are due (`next_run <= now`)
+4. Sends task to Letta Agent via `sendTaskMessage()`
+5. Deletes the old task message
+6. For **recurring tasks**: Creates new message with updated `next_run`
+7. For **one-time tasks**: Deletes and done
 
 ### Task Format (JSON):
 
@@ -60,13 +60,13 @@ DISCORD_CHANNEL_ID=<your_default_channel> # Fallback-Channel für Task-Antworten
 }
 ```
 
-**Felder:**
-- `task_name`: Name der Task
-- `description`: Beschreibung (optional)
-- `next_run`: ISO-8601 Zeitstempel wann Task fällig ist
-- `schedule`: `"daily"` | `"hourly"` | `"every_N_hours"` (für recurring)
-- `one_time`: `true` = einmalig, `false` = wiederkehrend
-- `active`: `true` = aktiv, `false` = deaktiviert
+**Fields:**
+- `task_name`: Task name
+- `description`: Description (optional)
+- `next_run`: ISO-8601 timestamp when task is due
+- `schedule`: `"daily"` | `"hourly"` | `"every_N_hours"` (for recurring)
+- `one_time`: `true` = one-time, `false` = recurring
+- `active`: `true` = active, `false` = disabled
 - `action_type`: `"user_reminder"` | `"channel_post"` | custom
 - `action_target`: Discord User/Channel ID
 
@@ -74,48 +74,48 @@ DISCORD_CHANNEL_ID=<your_default_channel> # Fallback-Channel für Task-Antworten
 
 ## 🔒 Security Notes
 
-- Beide Timer nutzen die gleiche Letta-Integration wie normale Messages (streaming, chunking, error handling)
-- Tasks werden nur aus dem konfigurierten `TASKS_CHANNEL_ID` gelesen (nicht von allen Channels)
-- Bot braucht `Read Message History` + `Manage Messages` Permissions im Task-Channel
-- Secrets (`LETTA_API_KEY`, `DISCORD_TOKEN`) bleiben in `.env` (gitignored)
+- Both timers use the same Letta integration as normal messages (streaming, chunking, error handling)
+- Tasks are only read from the configured `TASKS_CHANNEL_ID` (not from all channels)
+- Bot needs `Read Message History` + `Manage Messages` permissions in the task channel
+- Secrets (`LETTA_API_KEY`, `DISCORD_TOKEN`) stay in `.env` (gitignored)
 
 ---
 
 ## 🧪 Testing
 
-### Heartbeat Timer testen:
+### Testing Heartbeat Timer:
 ```bash
-# In .env setzen:
+# Set in .env:
 ENABLE_TIMER=true
 TIMER_INTERVAL_MINUTES=2
-FIRING_PROBABILITY=1.0  # 100% zum Testen
+FIRING_PROBABILITY=1.0  # 100% for testing
 
 npm start
-# Warte 1-2 Minuten, Agent sollte triggern
+# Wait 1-2 minutes, agent should trigger
 ```
 
-### Task Scheduler testen:
+### Testing Task Scheduler:
 ```bash
-# 1. Erstelle Task in #agent-tasks Channel:
+# 1. Create task in #agent-tasks channel:
 ```json
 {
   "task_name": "Test Task",
   "description": "This is a test",
-  "next_run": "2025-10-09T20:15:00Z",  # 2 Minuten in der Zukunft
+  "next_run": "2025-10-09T20:15:00Z",  # 2 minutes in the future
   "one_time": true,
   "active": true
 }
 ```
 
-# 2. Start Bot:
+# 2. Start bot:
 npm start
 
-# 3. Nach 60-120s sollte Task triggern und Message gelöscht werden
+# 3. After 60-120s task should trigger and message should be deleted
 ```
 
 ---
 
-## ⚙️ Vollständige .env für beide Timer:
+## ⚙️ Complete .env for both timers:
 
 ```env
 # Letta
@@ -141,5 +141,6 @@ SURFACE_ERRORS=true
 
 ---
 
-Viel Erfolg! 🚀
+Good luck! 🚀
 
+**Documentation Version:** 1.0

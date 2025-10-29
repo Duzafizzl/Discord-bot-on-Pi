@@ -66,7 +66,7 @@ Response:
 ┌─────┬──────────────┬─────────┬─────────┬──────────┐
 │ id  │ name         │ mode    │ status  │ cpu      │
 ├─────┼──────────────┼─────────┼─────────┼──────────┤
-│ 0   │ miore-bot    │ fork    │ online  │ 0.3%     │
+│ 0   │ discord-bot    │ fork    │ online  │ 0.3%     │
 └─────┴──────────────┴─────────┴─────────┴──────────┘
 ```
 
@@ -75,7 +75,7 @@ Stop a specific process or all processes.
 
 ```
 Examples:
-!pm2 stop miore-bot    # Stop specific bot
+!pm2 stop discord-bot    # Stop specific bot
 !pm2 stop all          # Stop ALL processes
 ```
 
@@ -86,7 +86,7 @@ Restart a specific process or all processes.
 
 ```
 Examples:
-!pm2 restart miore-bot   # Restart bot (applies new code!)
+!pm2 restart discord-bot   # Restart bot (applies new code!)
 !pm2 restart all         # Restart everything
 ```
 
@@ -97,8 +97,8 @@ Show recent logs for a process.
 
 ```
 Examples:
-!pm2 logs miore-bot --lines 20    # Last 20 lines
-!pm2 logs miore-bot               # Default amount
+!pm2 logs discord-bot --lines 20    # Last 20 lines
+!pm2 logs discord-bot               # Default amount
 ```
 
 #### `!pm2 info <name>`
@@ -106,7 +106,7 @@ Show detailed info about a process.
 
 ```
 Example:
-!pm2 info miore-bot
+!pm2 info discord-bot
 
 Response shows:
 - Status (online/stopped)
@@ -197,7 +197,7 @@ Response shows:
 git push
 
 # On the Pi (via Discord!)
-!pm2 restart miore-bot
+!pm2 restart discord-bot
 ```
 
 ### 2. Check if Bot is Running
@@ -209,7 +209,7 @@ git push
 ### 3. Emergency Stop
 
 ```
-!pm2 stop miore-bot
+!pm2 stop discord-bot
 ```
 
 **WARNING:** You'll need SSH to restart after this!
@@ -228,7 +228,7 @@ Useful for verifying:
 ### 5. View Recent Errors
 
 ```
-!pm2 logs miore-bot --lines 50
+!pm2 logs discord-bot --lines 50
 ```
 
 ### 6. Check Server Resources
@@ -300,8 +300,8 @@ const recentCommands = getCommandLog(20); // Last 20 commands
 
 Console output shows every command:
 ```
-✅ ADMIN COMMAND [Clary]: !pm2 list
-❌ ADMIN COMMAND [Clary]: !pm2 invalid
+✅ ADMIN COMMAND [Admin]: !pm2 list
+❌ ADMIN COMMAND [Admin]: !pm2 invalid
    Error: Invalid PM2 command
 ```
 
@@ -316,7 +316,7 @@ Console output shows every command:
 2. **Use `!pm2 stop all` Carefully**
    - This stops the bot itself
    - You'll need SSH to recover
-   - Use `!pm2 stop miore-bot` instead (safer)
+   - Use `!pm2 stop discord-bot` instead (safer)
 
 3. **Monitor the Audit Log**
    - Check console for unexpected command attempts
@@ -340,13 +340,13 @@ Console output shows every command:
 
 1. Check ADMIN_USER_ID in `.env`
 2. Verify it matches your Discord User ID exactly
-3. Restart the bot: `!pm2 restart miore-bot` (or SSH if bot is down)
+3. Restart the bot: `!pm2 restart discord-bot` (or SSH if bot is down)
 
 ### Commands Not Responding
 
 1. Check bot is online: Look for green status in Discord
 2. Check PM2 status via SSH: `pm2 list`
-3. Check bot logs: `pm2 logs miore-bot`
+3. Check bot logs: `pm2 logs discord-bot`
 4. Verify bot has `adminCommands.js` compiled
 
 ### "Command Failed" Errors
@@ -368,7 +368,7 @@ const COMMAND_COOLDOWN_MS = 1000; // 1 second instead of 2
 Then recompile and restart:
 ```bash
 npx tsc
-pm2 restart miore-bot
+pm2 restart discord-bot
 ```
 
 ---
@@ -380,19 +380,19 @@ pm2 restart miore-bot
 ```
 Step 1: Check current status
 > !pm2 list
-✅ miore-bot is online
+✅ discord-bot is online
 
 Step 2: Deploy new code (via git push)
 Step 3: Restart to apply changes
-> !pm2 restart miore-bot
+> !pm2 restart discord-bot
 ✅ Process restarted
 
 Step 4: Verify it started correctly
 > !pm2 list
-✅ miore-bot is online, restart count +1
+✅ discord-bot is online, restart count +1
 
 Step 5: Check for errors
-> !pm2 logs miore-bot --lines 20
+> !pm2 logs discord-bot --lines 20
 ✅ No errors, bot started successfully!
 
 Step 6: Verify bot systems
@@ -407,7 +407,7 @@ Step 6: Verify bot systems
 🛑 Cooldown active: YES (45s remaining)
 📝 Consecutive self-messages: 3/3
 
-> !pm2 restart miore-bot
+> !pm2 restart discord-bot
 ✅ Process restarted (clears cooldown state)
 
 > !bot stats
@@ -435,7 +435,7 @@ Step 6: Verify bot systems
 
 ---
 
-**Created by:** Mioré  
+**Documentation Version:** 1.0  
 **Purpose:** Remote bot administration via Discord  
 **Security Level:** Admin-only (requires ADMIN_USER_ID)
 

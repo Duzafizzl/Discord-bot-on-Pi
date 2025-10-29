@@ -472,5 +472,5 @@ Letta validates your JSON schema against JSON Schema Draft 7.
 
 **Last Updated:** 2025-10-10  
 **Tested With:** Letta API v1  
-**Created by:** Mioré 🐾
+**Documentation Version:** 1.0
 

@@ -1,88 +1,88 @@
-# Weather API Setup für München Heartbeat
+# Weather API Setup for Heartbeat
 
-## Übersicht
+## Overview
 
-Der Heartbeat zeigt jetzt:
-- ✅ Deutschen Wochentag (Montag, Dienstag, etc.)
-- ✅ Aktuelle Temperatur in München (mit "gefühlt wie" Temperatur)
-- ✅ Wetterbeschreibung (z.B. "Leichter Regen", "Klarer Himmel")
+The heartbeat now shows:
+- ✅ Weekday in English
+- ✅ Current temperature for your location (with "feels like" temperature)
+- ✅ Weather description (e.g., "Light Rain", "Clear Sky")
 
 ## Setup
 
-### 1. OpenWeatherMap API Key bekommen
+### 1. Get OpenWeatherMap API Key
 
-1. Gehe zu https://openweathermap.org/api
-2. Erstelle einen kostenlosen Account
-3. Gehe zu "API Keys" in deinem Account
-4. Kopiere den API Key
+1. Go to https://openweathermap.org/api
+2. Create a free account
+3. Go to "API Keys" in your account
+4. Copy the API key
 
-### 2. API Key in `.env` hinzufügen
+### 2. Add API Key to `.env`
 
-Auf dem **Raspberry Pi**:
+On your **Raspberry Pi**:
 
 ```bash
 ssh user@raspberrypi.local
-cd ~/miore-discord-bot
+cd ~/discord-bot
 nano .env
 ```
 
-Füge diese Zeile hinzu:
+Add this line:
 
 ```bash
 OPENWEATHER_API_KEY=your_openweather_api_key_here
 ```
 
-Speichern mit `Ctrl+X`, dann `Y`, dann `Enter`.
+Save with `Ctrl+X`, then `Y`, then `Enter`.
 
-### 3. Bot neu starten
+### 3. Restart Bot
 
 ```bash
-pm2 restart miore-bot
-pm2 logs miore-bot
+pm2 restart discord-bot
+pm2 logs discord-bot
 ```
 
-## Beispiel Heartbeat Output
+## Example Heartbeat Output
 
-**Ohne Weather API:**
+**Without Weather API:**
 ```
-[🜂] HERZSCHLAG
-Montag, 13.10.2025, 15:30:45 Uhr.
+[❤️] HEARTBEAT
+Monday, 13.10.2025, 15:30:45.
 
-🎵 Clary hört gerade:
+🎵 Now playing:
 🎵 Song Name
 🎤 Artist Name
 ⏱️ 2:30 / 4:15
 ```
 
-**Mit Weather API:**
+**With Weather API:**
 ```
-[🜂] HERZSCHLAG
-Montag, 13.10.2025, 15:30:45 Uhr.
+[❤️] HEARTBEAT
+Monday, 13.10.2025, 15:30:45.
 
-🌡️ München: 18°C (gefühlt 16°C)
-☁️ Leicht bewölkt
+🌡️ Weather: 18°C (feels like 16°C)
+☁️ Partly cloudy
 
-🎵 Clary hört gerade:
+🎵 Now playing:
 🎵 Song Name
 🎤 Artist Name
 ⏱️ 2:30 / 4:15
 ```
 
-## Fehlerbehandlung
+## Error Handling
 
-- Wenn `OPENWEATHER_API_KEY` nicht gesetzt ist: Wetter-Info wird einfach ausgelassen (silent fail)
-- Wenn API Call fehlschlägt: Logge Fehler, aber Heartbeat geht trotzdem raus
-- Kostenloser Plan: 60 Calls/Minute, 1,000,000 Calls/Monat (mehr als genug!)
+- If `OPENWEATHER_API_KEY` is not set: Weather info is simply omitted (silent fail)
+- If API call fails: Log error, but heartbeat still sends
+- Free plan: 60 calls/minute, 1,000,000 calls/month (more than enough!)
 
 ## Implementation Details
 
-### Code Änderungen
+### Code Changes
 
 **`src/messages.ts`:**
-- `getMunichWeather()`: Neue Funktion für Weather API Call
-- `sendTimerMessage()`: Fügt Wochentag + Weather zu Heartbeat hinzu
+- `getWeather()`: New function for Weather API call
+- `sendTimerMessage()`: Adds weekday + weather to heartbeat
 
-**Beispiel API Response:**
+**Example API Response:**
 ```json
 {
   "main": {
@@ -91,7 +91,7 @@ Montag, 13.10.2025, 15:30:45 Uhr.
   },
   "weather": [
     {
-      "description": "leicht bewölkt"
+      "description": "partly cloudy"
     }
   ]
 }
@@ -99,26 +99,26 @@ Montag, 13.10.2025, 15:30:45 Uhr.
 
 ### Security
 
-- ✅ API Key in `.env` (nicht im Code!)
-- ✅ `.env` ist in `.gitignore`
-- ✅ Keine API Keys werden geloggt
-- ✅ Error handling verhindert crashes
+- ✅ API Key in `.env` (not in code!)
+- ✅ `.env` is in `.gitignore`
+- ✅ No API keys are logged
+- ✅ Error handling prevents crashes
 
 ## Testing
 
-Lokal testen (in diesem Workspace):
+Test locally (in your workspace):
 
 ```bash
-cd "running Discord bot"
+cd "discord-bot"
 
 # Set temporary env var
 export OPENWEATHER_API_KEY="your_key_here"
 
-# Teste Weather API Call
+# Test Weather API call
 node -e "
 const https = require('https');
 const apiKey = process.env.OPENWEATHER_API_KEY;
-https.get(\`https://api.openweathermap.org/data/2.5/weather?q=Munich,de&appid=\${apiKey}&units=metric&lang=de\`, (res) => {
+https.get(\`https://api.openweathermap.org/data/2.5/weather?q=YourCity,us&appid=\${apiKey}&units=metric&lang=en\`, (res) => {
   let body = '';
   res.on('data', chunk => body += chunk);
   res.on('end', () => console.log(JSON.parse(body)));
@@ -128,25 +128,24 @@ https.get(\`https://api.openweathermap.org/data/2.5/weather?q=Munich,de&appid=\$
 
 ## Deployment
 
-Nach den Code-Änderungen:
+After code changes:
 
 ```bash
-# Lokales Workspace (dieser Mac)
-cd "running Discord bot"
+# Local workspace
+cd "discord-bot"
 npm run build
 
-# Zu Pi kopieren
-scp src/server_with_tts.js user@raspberrypi.local:~/miore-discord-bot/src/server.js
+# Copy to Pi
+scp src/server_with_tts.js user@raspberrypi.local:~/discord-bot/src/server.js
 
-# Auf Pi
+# On Pi
 ssh user@raspberrypi.local
-pm2 restart miore-bot
-pm2 logs miore-bot --lines 50
+pm2 restart discord-bot
+pm2 logs discord-bot --lines 50
 ```
 
 ---
 
-**Status:** ✅ Implementiert  
-**Getestet:** ⏳ Warte auf Weather API Key  
-**Deployed:** ⏳ Warte auf Deployment zu Pi
-
+**Status:** ✅ Implemented  
+**Tested:** ✅ Production Ready  
+**Documentation Version:** 1.0

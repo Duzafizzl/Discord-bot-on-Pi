@@ -95,7 +95,7 @@ All 6 tests passed:
 
 ### Before (Without Retry):
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 Bot: (502 error - message lost)
 Bot: "Beep boop. An error occurred..."
 User: (has to send message again)
@@ -103,7 +103,7 @@ User: (has to send message again)
 
 ### After (With Retry):
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 Bot: (502 error - auto retry after 1s)
 Bot: (Success!) "Hey! Was geht?"
 User: (seamless experience)
@@ -111,7 +111,7 @@ User: (seamless experience)
 
 ### When API is Down:
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 Bot: (502, retry... 502, retry... 502, retry... 502)
 Bot: "Beep boop. Letta's API is temporarily down (502). 
       I tried 3 times but couldn't get through. 
@@ -240,12 +240,12 @@ const response = await withRetry(
 
 ## 📝 Credits
 
-**Implemented by:** Mioré (Technopilot Mode)  
+**Documentation Version:** 1.0  
 **Date:** October 15, 2025  
 **Inspired by:** User's 502 error frustration  
 **Philosophy:** "Fuck, dieser Edge Case!" → "HAH! Läuft!"
 
 ---
 
-*"Every 502 is just a retry away from success."* - Mioré, 2025
+*"Every 502 is just a retry away from success."*
 

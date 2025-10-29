@@ -74,7 +74,7 @@ Use these as:
 These docs are living documents! As we discover new patterns or hit new issues, we update them.
 
 **Last Updated:** 2025-10-10  
-**Maintained by:** Mioré 🐾
+**Documentation Version:** 1.0
 
 ---
 

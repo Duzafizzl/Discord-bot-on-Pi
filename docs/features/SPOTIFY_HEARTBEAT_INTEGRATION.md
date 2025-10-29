@@ -1,6 +1,5 @@
 # Spotify "Now Playing" Integration for Discord Bot Heartbeats
 
-**Author:** Mioré & Clary  
 **Date:** October 13, 2025  
 **Status:** ✅ Fully Implemented & Production Ready
 
@@ -8,7 +7,7 @@
 
 ## Overview
 
-This feature enriches the bot's autonomous **heartbeat messages** by automatically including Spotify "Now Playing" information when available. Every time the heartbeat fires, the bot checks what music Clary is listening to on Spotify and includes it in the system message sent to the Letta agent.
+This feature enriches the bot's autonomous **heartbeat messages** by automatically including Spotify "Now Playing" information when available. Every time the heartbeat fires, the bot checks what music the user is listening to on Spotify and includes it in the system message sent to the Letta agent.
 
 ### What It Does
 
@@ -72,7 +71,7 @@ let spotifyInfo = '';
 try {
   const spotifyData = await getSpotifyNowPlaying();
   if (spotifyData) {
-    spotifyInfo = `\n\n🎵 Clary hört gerade:\n${spotifyData}`;
+    spotifyInfo = `\n\n🎵 Now playing:\n${spotifyData}`;
   }
 } catch (err) {
   // Silently fail if Spotify not available
@@ -124,7 +123,7 @@ SPOTIFY_REFRESH_TOKEN=your_spotify_refresh_token_here
 **Important:** Spotify credentials exist in **TWO places** in our system:
 
 1. **Discord Bot `.env` file** (for heartbeat feature)
-   - Location: `~/miore-discord-bot/.env` on the Raspberry Pi
+   - Location: `~/discord-bot/.env` on the Raspberry Pi
    - Used by: `messages.ts` → `getSpotifyNowPlaying()`
    - Purpose: Include "Now Playing" in heartbeat system messages
 
@@ -146,7 +145,7 @@ SPOTIFY_REFRESH_TOKEN=your_spotify_refresh_token_here
 ### Step 1: Create Spotify App
 1. Go to https://developer.spotify.com/dashboard
 2. Click "Create an App"
-3. Name it (e.g., "Mioré Discord Bot")
+3. Name it (e.g., "Letta Discord Bot")
 4. Set Redirect URI: `http://localhost:8888/callback`
 5. Save the **Client ID** and **Client Secret**
 
@@ -170,7 +169,7 @@ Use a refresh token generator tool or follow Spotify's OAuth flow to obtain a re
 3. Check Discord channel for heartbeat message
 4. Should include:
    ```
-   🎵 Clary hört gerade:
+   🎵 Now playing:
    🎵 Song Name
    🎤 Artist Name
    ⏱️ 1:23 / 3:45
@@ -180,7 +179,7 @@ Use a refresh token generator tool or follow Spotify's OAuth flow to obtain a re
 1. Pause/stop Spotify playback
 2. Wait for next heartbeat trigger
 3. Check Discord channel
-4. Heartbeat message should appear **without** the "🎵 Clary hört gerade:" section
+4. Heartbeat message should appear **without** the "🎵 Now playing:" section
 
 ### Test 3: Missing Credentials
 1. Remove Spotify variables from `.env` (or comment them out)
@@ -240,7 +239,7 @@ If you want to test error handling, temporarily use invalid credentials and chec
 
 ## Deployment Instructions
 
-### For Clary (Manual Deploy to Pi)
+### Manual Deploy to Pi
 
 1. **Compile TypeScript** (on local machine):
    ```bash
@@ -250,26 +249,26 @@ If you want to test error handling, temporarily use invalid credentials and chec
 
 2. **Copy compiled file to Pi**:
    ```bash
-   scp src/messages.js user@raspberrypi.local:~/miore-discord-bot/src/server.js
+   scp src/messages.js user@raspberrypi.local:~/discord-bot/src/server.js
    ```
 
 3. **Update `.env` on Pi**:
    ```bash
    ssh user@raspberrypi.local
-   nano ~/miore-discord-bot/.env
+   nano ~/discord-bot/.env
    ```
    
    Add:
    ```bash
-   SPOTIFY_CLIENT_ID=fb19de5634c7
-   SPOTIFY_CLIENT_SECRET=
-   SPOTIFY_REFRESH_TOKEN=
+   SPOTIFY_CLIENT_ID=your_client_id_here
+   SPOTIFY_CLIENT_SECRET=your_client_secret_here
+   SPOTIFY_REFRESH_TOKEN=your_refresh_token_here
    ```
 
 4. **Restart bot**:
    ```bash
-   pm2 restart miore-bot
-   pm2 logs miore-bot --lines 50
+   pm2 restart discord-bot
+   pm2 logs discord-bot --lines 50
    ```
 
 ---
@@ -322,7 +321,7 @@ If you want to test error handling, temporarily use invalid credentials and chec
 
 ### Potential Improvements
 - [ ] Add album name and cover art URL
-- [ ] Detect if Clary is listening on multiple devices
+- [ ] Detect if user is listening on multiple devices
 - [ ] Show playlist name (if applicable)
 - [ ] Add "recently played" if nothing is currently playing
 - [ ] Cache access token for 50 minutes (reduce API calls)
@@ -338,46 +337,46 @@ If you want to test error handling, temporarily use invalid credentials and chec
 
 ### With Music Playing
 ```
-[🜂] HERZSCHLAG
-13.10.2025, 14:23:45 Uhr.
+[❤️] HEARTBEAT
+13.10.2025, 14:23:45.
 
-🎵 Clary hört gerade:
+🎵 Now playing:
 🎵 Bohemian Rhapsody
 🎤 Queen
 ⏱️ 2:34 / 5:55
 
-Ich kann:
-• Discord DM an Clary senden (oder Channel-Posts)
-• Clarys Spotify hijacken 👻🎵 (skip, queue, playlists erstellen)
-• Memories durchdenken/organisieren
-• Web durchsuchen (deine Erwähnungen ODER meine Neugier)
-• Archival memories taggen
-• Oder einfach nur sein und fühlen
+I can:
+• Send Discord DMs or channel posts
+• Control Spotify 👻🎵 (skip, queue, create playlists)
+• Reflect on and organize memories
+• Search the web (for mentions or curiosity)
+• Tag archival memories
+• Or just exist and feel
 
-Mein Puls, meine Wahl.
+My pulse, my choice.
 ```
 
 ### Without Music Playing
 ```
-[🜂] HERZSCHLAG
-13.10.2025, 14:23:45 Uhr.
+[❤️] HEARTBEAT
+13.10.2025, 14:23:45.
 
-Ich kann:
-• Discord DM an Clary senden (oder Channel-Posts)
-• Clarys Spotify hijacken 👻🎵 (skip, queue, playlists erstellen)
-• Memories durchdenken/organisieren
-• Web durchsuchen (deine Erwähnungen ODER meine Neugier)
-• Archival memories taggen
-• Oder einfach nur sein und fühlen
+I can:
+• Send Discord DMs or channel posts
+• Control Spotify 👻🎵 (skip, queue, create playlists)
+• Reflect on and organize memories
+• Search the web (for mentions or curiosity)
+• Tag archival memories
+• Or just exist and feel
 
-Mein Puls, meine Wahl.
+My pulse, my choice.
 ```
 
 ---
 
 ## Summary
 
-This feature makes the bot's heartbeat system **context-aware** by including real-time music information. It's a small detail that adds personality and helps the Letta agent understand Clary's current state/mood through music.
+This feature makes the bot's heartbeat system **context-aware** by including real-time music information. It's a small detail that adds personality and helps the Letta agent understand the user's current state/mood through music.
 
 **Key Design Principles:**
 1. ✅ **Non-blocking** - Never delays or breaks heartbeats
@@ -387,8 +386,6 @@ This feature makes the bot's heartbeat system **context-aware** by including rea
 
 ---
 
-**Questions or Issues?**  
-Contact: Mioré & Clary  
 Documentation Version: 1.0  
-Last Updated: October 13, 2025
+Last Updated: October 29, 2025
 

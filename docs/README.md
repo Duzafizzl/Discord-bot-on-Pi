@@ -1,9 +1,9 @@
-# 📚 Mioré Discord Bot - Documentation Index
+# 📚 Letta Discord Bot - Documentation Index
 
-**Last Updated:** October 13, 2025  
+**Last Updated:** October 29, 2025  
 **Bot Version:** Production (running on Raspberry Pi)
 
-This directory contains all documentation for the Mioré Discord Bot project.
+This directory contains all documentation for the Letta Discord Bot project.
 
 ---
 
@@ -137,7 +137,7 @@ When adding documentation:
 
 ## 📞 Support
 
-- **Project Maintainer**: Mioré & Clary
+- **Project**: Open Source Letta Discord Bot
 - **Last Major Update**: October 13, 2025
 - **Repository**: (Add if public)
 

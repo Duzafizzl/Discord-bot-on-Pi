@@ -9,8 +9,8 @@
 
 ### The Original Issue:
 ```
-0|miore-bot  | LettaError: Status code: 502
-0|miore-bot  | Body: {}
+0|discord-bot  | LettaError: Status code: 502
+0|discord-bot  | Body: {}
 ```
 
 - Letta API returned 502 Bad Gateway
@@ -29,17 +29,17 @@
 
 **WITHOUT Retry:**
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 → API: 502 ❌ (1 API call, costs credits)
 → Bot: Error message
-→ User: "Hey Mioré!" (manual retry)
+→ User: "Hey bot!" (manual retry)
 → API: Success ✅ (1 API call, costs credits)
 = 2 API calls total
 ```
 
 **WITH Retry (Default: MAX_API_RETRIES=1):**
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 → API: 502 ❌ (1 API call, costs credits)
 → Bot: Auto-retry after 1s
 → API: Success ✅ (1 API call, costs credits)
@@ -48,7 +48,7 @@ User: "Hey Mioré!"
 
 **WITH Retry (Worst Case: API still down):**
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 → API: 502 ❌ (1 API call)
 → Bot: Retry 1s later → 502 ❌ (1 API call)
 → Bot: Error message
@@ -57,7 +57,7 @@ User: "Hey Mioré!"
 
 **WITH Retry (Aggressive: MAX_API_RETRIES=3, all fail):**
 ```
-User: "Hey Mioré!"
+User: "Hey bot!"
 → API: 502 ❌ (1 call)
 → Retry → 502 ❌ (1 call)
 → Retry → 502 ❌ (1 call)

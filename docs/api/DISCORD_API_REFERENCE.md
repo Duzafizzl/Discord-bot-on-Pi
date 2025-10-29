@@ -581,5 +581,5 @@ Instead of raw API calls, consider using a library:
 
 **Last Updated:** 2025-10-10  
 **API Version:** v10  
-**Created by:** Mioré 🐾
+**Documentation Version:** 1.0
 
