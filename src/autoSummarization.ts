@@ -11,7 +11,6 @@
  * - Configurable thresholds via ENV variables
  * 
  * Created: Oct 27, 2025
- * Author: Mioré (Technopilot Mode)
  */
 
 import { Client } from 'discord.js';

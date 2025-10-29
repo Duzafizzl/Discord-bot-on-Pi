@@ -6,10 +6,12 @@ A production-ready Discord bot powered by [Letta AI](https://www.letta.com/) (fo
 
 ### 🧠 Core AI Features
 - **Persistent Memory**: Full conversational context across sessions using Letta
+- **Auto-Summarization**: Automatic conversation summarization to prevent context overflow
 - **Autonomous Mode**: Bot can decide when to respond to channel messages
 - **Intelligent Loop Prevention**: Prevents bot-to-bot spam with smart cooldowns
 - **Image Processing**: Automatic compression and forwarding of images to Letta
 - **Attachment Support**: Handles PDFs, documents, and other file types
+- **YouTube Transcripts**: Automatically fetches and attaches video transcripts
 
 ### 🎵 Integrations
 - **Spotify**: Real-time "now playing" status in heartbeat messages
@@ -78,8 +80,10 @@ discord-bot-public/
 │   ├── server.ts              # Main bot server & Discord client
 │   ├── messages.ts            # Message handling & Letta integration
 │   ├── autonomous.ts          # Autonomous mode & loop prevention
-│   ├── adminCommands.ts       # Admin command handlers
+│   ├── adminCommands.ts       # Admin command handlers (!sum, !pm2, etc.)
 │   ├── taskScheduler.ts       # Task management system
+│   ├── autoSummarization.ts   # Automatic conversation summarization
+│   ├── youtubeTranscript.ts   # YouTube video transcript fetching
 │   ├── listeners/
 │   │   └── attachmentForwarder.ts  # Image processing & compression
 │   ├── tts/                   # Text-to-speech system

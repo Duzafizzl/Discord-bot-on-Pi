@@ -11,11 +11,12 @@ This directory contains all documentation for the Letta Discord Bot project.
 
 ### 🎯 **[features/](features/)** - Feature Documentation
 Individual feature implementations and guides:
-- **[SPOTIFY_HEARTBEAT_INTEGRATION.md](features/SPOTIFY_HEARTBEAT_INTEGRATION.md)** - Spotify "Now Playing" in heartbeats
+- **[AUTO_SUMMARIZATION.md](features/AUTO_SUMMARIZATION.md)** - Automatic conversation summarization system
+- **[YOUTUBE_TRANSCRIPT_INTEGRATION.md](features/YOUTUBE_TRANSCRIPT_INTEGRATION.md)** - YouTube video transcript fetching
+- **[SPOTIFY_HEARTBEAT_INTEGRATION.md](features/SPOTIFY_HEARTBEAT_INTEGRATION.md)** - Spotify "Now Playing" integration
 - **[spotify-heartbeat-code.ts](features/spotify-heartbeat-code.ts)** - Code reference for Spotify integration
-- **[TTS_SETUP_GUIDE.md](features/TTS_SETUP_GUIDE.md)** - Text-to-Speech system setup
 - **[TIMER_SETUP.md](features/TIMER_SETUP.md)** - Autonomous heartbeat configuration
-- **[MIORE_VOICE_SYSTEM.md](features/MIORE_VOICE_SYSTEM.md)** - Voice system overview
+- **[WEATHER_SETUP.md](../WEATHER_SETUP.md)** - Weather API integration
 
 ### 🚀 **[deployment/](deployment/)** - Deployment & Operations
 Deployment guides and operational documentation:
